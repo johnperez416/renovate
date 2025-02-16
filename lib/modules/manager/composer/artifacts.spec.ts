@@ -1,9 +1,9 @@
+import { mockDeep } from 'jest-mock-extended';
 import { join } from 'upath';
 import { envMock, mockExecAll } from '../../../../test/exec-util';
 import { env, fs, git, mocked, partial } from '../../../../test/util';
 import { GlobalConfig } from '../../../config/global';
 import type { RepoGlobalConfig } from '../../../config/types';
-import { PlatformId } from '../../../constants';
 import * as docker from '../../../util/exec/docker';
 import type { StatusResult } from '../../../util/git/types';
 import * as hostRules from '../../../util/host-rules';
@@ -14,11 +14,11 @@ import type { UpdateArtifactsConfig } from '../types';
 import * as composer from '.';
 
 jest.mock('../../../util/exec/env');
-jest.mock('../../datasource');
+jest.mock('../../datasource', () => mockDeep());
 jest.mock('../../../util/fs');
 jest.mock('../../../util/git');
 
-process.env.BUILDPACK = 'true';
+process.env.CONTAINERBASE = 'true';
 
 const datasource = mocked(_datasource);
 
@@ -34,6 +34,7 @@ const adminConfig: RepoGlobalConfig = {
   localDir: join('/tmp/github/some/repo'),
   cacheDir: join('/tmp/renovate/cache'),
   containerbaseDir: join('/tmp/renovate/cache/containerbase'),
+  dockerSidecarImage: 'ghcr.io/containerbase/sidecar',
 };
 
 const repoStatus = partial<StatusResult>({
@@ -44,8 +45,6 @@ const repoStatus = partial<StatusResult>({
 
 describe('modules/manager/composer/artifacts', () => {
   beforeEach(() => {
-    jest.resetAllMocks();
-    jest.resetModules();
     env.getChildProcessEnv.mockReturnValue(envMock.basic);
     docker.resetPrefetchedImages();
     hostRules.clear();
@@ -75,7 +74,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toBeNull();
   });
 
@@ -92,14 +91,17 @@ describe('modules/manager/composer/artifacts', () => {
     expect(
       await composer.updateArtifacts({
         packageFileName: 'composer.json',
-        updatedDeps: [{ depName: 'foo' }, { depName: 'bar' }],
+        updatedDeps: [
+          { depName: 'foo', newVersion: '1.0.0' },
+          { depName: 'bar', newVersion: '2.0.0' },
+        ],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toBeNull();
     expect(execSnapshots).toMatchObject([
       {
-        cmd: 'composer update foo bar --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction',
+        cmd: 'composer update foo:1.0.0 bar:2.0.0 --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction',
         options: {
           cwd: '/tmp/github/some/repo',
           env: {
@@ -112,7 +114,7 @@ describe('modules/manager/composer/artifacts', () => {
 
   it('uses hostRules to set COMPOSER_AUTH', async () => {
     hostRules.add({
-      hostType: PlatformId.Github,
+      hostType: 'github',
       matchHost: 'api.github.com',
       token: 'ghp_github-token',
     });
@@ -123,7 +125,7 @@ describe('modules/manager/composer/artifacts', () => {
       token: 'ghp_git-tags-token',
     });
     hostRules.add({
-      hostType: PlatformId.Gitlab,
+      hostType: 'gitlab',
       matchHost: 'gitlab.com',
       token: 'gitlab-token',
     });
@@ -163,7 +165,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config: authConfig,
-      })
+      }),
     ).toBeNull();
     expect(execSnapshots).toMatchObject([
       {
@@ -207,7 +209,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config: authConfig,
-      })
+      }),
     ).toBeNull();
 
     expect(execSnapshots).toMatchObject([
@@ -223,7 +225,7 @@ describe('modules/manager/composer/artifacts', () => {
 
   it('Skip github application access token hostRules in COMPOSER_AUTH', async () => {
     hostRules.add({
-      hostType: PlatformId.Github,
+      hostType: 'github',
       matchHost: 'api.github.com',
       token: 'ghs_token',
     });
@@ -246,13 +248,370 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config: authConfig,
-      })
+      }),
     ).toBeNull();
     expect(execSnapshots).toMatchObject([
       {
         options: {
           env: {
             COMPOSER_AUTH: '{"github-oauth":{"github.com":"ghp_token"}}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('github hostRule for github.com with x-access-token set github-token in COMPOSER_AUTH', async () => {
+    hostRules.add({
+      hostType: 'github',
+      matchHost: 'https://api.github.com/',
+      token: 'x-access-token:ghp_token',
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH: '{"github-oauth":{"github.com":"ghp_token"}}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('does set github COMPOSER_AUTH for github when only hostType git-tags artifactAuth does not include composer', async () => {
+    hostRules.add({
+      hostType: 'github',
+      matchHost: 'api.github.com',
+      token: 'ghs_token',
+    });
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+      artifactAuth: [],
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH: '{"github-oauth":{"github.com":"ghs_token"}}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('does set github COMPOSER_AUTH for git-tags when only hostType github artifactAuth does not include composer', async () => {
+    hostRules.add({
+      hostType: 'github',
+      matchHost: 'api.github.com',
+      token: 'ghs_token',
+      artifactAuth: [],
+    });
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH: '{"github-oauth":{"github.com":"ghp_token"}}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('does not set github COMPOSER_AUTH when artifactAuth does not include composer, for both hostType github & git-tags', async () => {
+    hostRules.add({
+      hostType: 'github',
+      matchHost: 'api.github.com',
+      token: 'ghs_token',
+      artifactAuth: [],
+    });
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+      artifactAuth: [],
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+    expect(execSnapshots[0].options?.env).not.toContainKey('COMPOSER_AUTH');
+  });
+
+  it('does not set gitlab COMPOSER_AUTH when artifactAuth does not include composer', async () => {
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+    });
+    hostRules.add({
+      hostType: 'gitlab',
+      matchHost: 'gitlab.com',
+      token: 'gitlab-token',
+      artifactAuth: [],
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      postUpdateOptions: ['composerGitlabToken'],
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH: '{"github-oauth":{"github.com":"ghp_token"}}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('does not set packagist COMPOSER_AUTH when artifactAuth does not include composer', async () => {
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      matchHost: 'packagist.renovatebot.com',
+      username: 'some-username',
+      password: 'some-password',
+      artifactAuth: [],
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      matchHost: 'https://artifactory.yyyyyyy.com/artifactory/api/composer/',
+      username: 'some-other-username',
+      password: 'some-other-password',
+      artifactAuth: [],
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      username: 'some-other-username',
+      password: 'some-other-password',
+      artifactAuth: [],
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      matchHost: 'https://packages-bearer.example.com/',
+      token: 'abcdef0123456789',
+      artifactAuth: [],
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      postUpdateOptions: ['composerGitlabToken'],
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH: '{"github-oauth":{"github.com":"ghp_token"}}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('does set gitlab COMPOSER_AUTH when artifactAuth does include composer', async () => {
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+    });
+    hostRules.add({
+      hostType: 'gitlab',
+      matchHost: 'gitlab.com',
+      token: 'gitlab-token',
+      artifactAuth: ['composer'],
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      postUpdateOptions: ['composerGitlabToken'],
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH:
+              '{"github-oauth":{"github.com":"ghp_token"},' +
+              '"gitlab-token":{"gitlab.com":"gitlab-token"},' +
+              '"gitlab-domains":["gitlab.com"]}',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('does set packagist COMPOSER_AUTH when artifactAuth does include composer', async () => {
+    hostRules.add({
+      hostType: GitTagsDatasource.id,
+      matchHost: 'github.com',
+      token: 'ghp_token',
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      matchHost: 'packagist.renovatebot.com',
+      username: 'some-username',
+      password: 'some-password',
+      artifactAuth: ['composer'],
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      matchHost: 'https://artifactory.yyyyyyy.com/artifactory/api/composer/',
+      username: 'some-other-username',
+      password: 'some-other-password',
+      artifactAuth: ['composer'],
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      username: 'some-other-username',
+      password: 'some-other-password',
+      artifactAuth: ['composer'],
+    });
+    hostRules.add({
+      hostType: PackagistDatasource.id,
+      matchHost: 'https://packages-bearer.example.com/',
+      token: 'abcdef0123456789',
+      artifactAuth: ['composer'],
+    });
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const authConfig = {
+      ...config,
+      postUpdateOptions: ['composerGitlabToken'],
+      registryUrls: ['https://packagist.renovatebot.com'],
+    };
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: authConfig,
+      }),
+    ).toBeNull();
+
+    expect(execSnapshots).toMatchObject([
+      {
+        options: {
+          env: {
+            COMPOSER_AUTH:
+              '{"github-oauth":{"github.com":"ghp_token"},' +
+              '"http-basic":{' +
+              '"packagist.renovatebot.com":{"username":"some-username","password":"some-password"},' +
+              '"artifactory.yyyyyyy.com":{"username":"some-other-username","password":"some-other-password"}' +
+              '},' +
+              '"bearer":{"packages-bearer.example.com":"abcdef0123456789"}}',
           },
         },
       },
@@ -273,7 +632,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -369,7 +728,7 @@ describe('modules/manager/composer/artifacts', () => {
           ...config,
           isLockFileMaintenance: true,
         },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -416,7 +775,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config: { ...config, constraints: { composer: '^1.10.0', php: '7.3' } },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -428,27 +787,29 @@ describe('modules/manager/composer/artifacts', () => {
     ]);
     expect(execSnapshots).toMatchObject([
       {
-        cmd: 'docker pull renovate/php:7.3',
+        cmd: 'docker pull ghcr.io/containerbase/sidecar',
         options: {
           encoding: 'utf-8',
         },
       },
       {
-        cmd: 'docker ps --filter name=renovate_php -aq',
+        cmd: 'docker ps --filter name=renovate_sidecar -aq',
         options: {
           encoding: 'utf-8',
         },
       },
       {
         cmd:
-          'docker run --rm --name=renovate_php --label=renovate_child ' +
+          'docker run --rm --name=renovate_sidecar --label=renovate_child ' +
           '-v "/tmp/github/some/repo":"/tmp/github/some/repo" ' +
           '-v "/tmp/renovate/cache":"/tmp/renovate/cache" ' +
           '-e COMPOSER_CACHE_DIR ' +
-          '-e BUILDPACK_CACHE_DIR ' +
+          '-e CONTAINERBASE_CACHE_DIR ' +
           '-w "/tmp/github/some/repo" ' +
-          'renovate/php:7.3' +
+          'ghcr.io/containerbase/sidecar' +
           ' bash -l -c "' +
+          'install-tool php 7.3' +
+          ' && ' +
           'install-tool composer 1.10.17' +
           ' && ' +
           'composer update --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins' +
@@ -456,7 +817,6 @@ describe('modules/manager/composer/artifacts', () => {
         options: {
           cwd: '/tmp/github/some/repo',
           env: {
-            BUILDPACK_CACHE_DIR: '/tmp/renovate/cache/containerbase',
             COMPOSER_CACHE_DIR: '/tmp/renovate/cache/others/composer',
           },
         },
@@ -493,7 +853,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config: { ...config, constraints: { composer: '^1.10.0', php: '7.3' } },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -505,6 +865,9 @@ describe('modules/manager/composer/artifacts', () => {
     ]);
     expect(execSnapshots).toMatchObject([
       {
+        cmd: 'install-tool php 7.3',
+      },
+      {
         cmd: 'install-tool composer 1.10.17',
       },
       {
@@ -512,7 +875,6 @@ describe('modules/manager/composer/artifacts', () => {
         options: {
           cwd: '/tmp/github/some/repo',
           env: {
-            BUILDPACK_CACHE_DIR: '/tmp/renovate/cache/containerbase',
             COMPOSER_CACHE_DIR: '/tmp/renovate/cache/others/composer',
           },
         },
@@ -535,7 +897,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -565,7 +927,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toEqual([
       {
         artifactError: {
@@ -591,7 +953,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toEqual([{ artifactError: { lockFile: 'composer.lock', stderr } }]);
     expect(execSnapshots).toBeEmptyArray();
   });
@@ -601,7 +963,7 @@ describe('modules/manager/composer/artifacts', () => {
     fs.readLocalFile.mockResolvedValueOnce('{}');
     fs.writeLocalFile.mockImplementationOnce(() => {
       throw new Error(
-        'vendor/composer/07fe2366/sebastianbergmann-php-code-coverage-c896779/src/Report/Html/Renderer/Template/js/d3.min.js:  write error (disk full?).  Continue? (y/n/^C) '
+        'vendor/composer/07fe2366/sebastianbergmann-php-code-coverage-c896779/src/Report/Html/Renderer/Template/js/d3.min.js:  write error (disk full?).  Continue? (y/n/^C) ',
       );
     });
     await expect(
@@ -610,7 +972,7 @@ describe('modules/manager/composer/artifacts', () => {
         updatedDeps: [],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).rejects.toThrow();
     expect(execSnapshots).toBeEmptyArray();
   });
@@ -632,7 +994,7 @@ describe('modules/manager/composer/artifacts', () => {
           ...config,
           composerIgnorePlatformReqs: undefined,
         },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -667,7 +1029,7 @@ describe('modules/manager/composer/artifacts', () => {
           ...config,
           composerIgnorePlatformReqs: ['ext-posix', 'ext-sodium'],
         },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -687,7 +1049,7 @@ describe('modules/manager/composer/artifacts', () => {
 
   it('installs before running the update when symfony flex is installed', async () => {
     fs.readLocalFile.mockResolvedValueOnce(
-      '{"packages":[{"name":"symfony/flex","version":"1.17.1"}]}'
+      '{"packages":[{"name":"symfony/flex","version":"1.17.1"}]}',
     );
     const execSnapshots = mockExecAll();
     fs.readLocalFile.mockResolvedValueOnce('{ }');
@@ -703,7 +1065,7 @@ describe('modules/manager/composer/artifacts', () => {
         config: {
           ...config,
         },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -715,8 +1077,14 @@ describe('modules/manager/composer/artifacts', () => {
     ]);
     expect(execSnapshots).toMatchObject([
       {
+        cmd: 'git stash -- composer.json',
+      },
+      {
         cmd: 'composer install --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins',
         options: { cwd: '/tmp/github/some/repo' },
+      },
+      {
+        cmd: 'git stash pop || true',
       },
       {
         cmd: 'composer update --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins',
@@ -727,7 +1095,7 @@ describe('modules/manager/composer/artifacts', () => {
 
   it('installs before running the update when symfony flex is installed as dev', async () => {
     fs.readLocalFile.mockResolvedValueOnce(
-      '{"packages-dev":[{"name":"symfony/flex","version":"1.17.1"}]}'
+      '{"packages-dev":[{"name":"symfony/flex","version":"1.17.1"}]}',
     );
     const execSnapshots = mockExecAll();
     fs.readLocalFile.mockResolvedValueOnce('{ }');
@@ -743,7 +1111,7 @@ describe('modules/manager/composer/artifacts', () => {
         config: {
           ...config,
         },
-      })
+      }),
     ).toEqual([
       {
         file: {
@@ -755,8 +1123,14 @@ describe('modules/manager/composer/artifacts', () => {
     ]);
     expect(execSnapshots).toMatchObject([
       {
+        cmd: 'git stash -- composer.json',
+      },
+      {
         cmd: 'composer install --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins',
         options: { cwd: '/tmp/github/some/repo', encoding: 'utf-8' },
+      },
+      {
+        cmd: 'git stash pop || true',
       },
       {
         cmd: 'composer update --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins',
@@ -774,14 +1148,17 @@ describe('modules/manager/composer/artifacts', () => {
     expect(
       await composer.updateArtifacts({
         packageFileName: 'composer.json',
-        updatedDeps: [{ depName: 'foo' }, { depName: 'bar' }],
+        updatedDeps: [
+          { depName: 'foo', newVersion: '1.0.0' },
+          { depName: 'bar', newVersion: '2.0.0' },
+        ],
         newPackageFileContent: '{}',
         config,
-      })
+      }),
     ).toBeNull();
     expect(execSnapshots).toMatchObject([
       {
-        cmd: 'composer update foo bar --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader',
+        cmd: 'composer update foo:1.0.0 bar:2.0.0 --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader',
         options: { cwd: '/tmp/github/some/repo' },
       },
     ]);
@@ -802,11 +1179,33 @@ describe('modules/manager/composer/artifacts', () => {
           ...config,
           ignorePlugins: true,
         },
-      })
+      }),
     ).toBeNull();
     expect(execSnapshots).toMatchObject([
       {
         cmd: 'composer update foo bar --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins',
+        options: { cwd: '/tmp/github/some/repo' },
+      },
+    ]);
+  });
+
+  it('includes new dependency version in update command', async () => {
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    const execSnapshots = mockExecAll();
+    fs.readLocalFile.mockResolvedValueOnce('{}');
+    git.getRepoStatus.mockResolvedValueOnce(repoStatus);
+
+    expect(
+      await composer.updateArtifacts({
+        packageFileName: 'composer.json',
+        updatedDeps: [{ depName: 'foo', newVersion: '1.1.0' }],
+        newPackageFileContent: '{}',
+        config,
+      }),
+    ).toBeNull();
+    expect(execSnapshots).toMatchObject([
+      {
+        cmd: 'composer update foo:1.1.0 --with-dependencies --ignore-platform-reqs --no-ansi --no-interaction --no-scripts --no-autoloader --no-plugins',
         options: { cwd: '/tmp/github/some/repo' },
       },
     ]);

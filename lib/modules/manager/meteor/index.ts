@@ -1,9 +1,10 @@
-import { ProgrammingLanguage } from '../../../constants';
+import type { Category } from '../../../constants';
 import { NpmDatasource } from '../../datasource/npm';
 
 export { extractPackageFile } from './extract';
 
-export const language = ProgrammingLanguage.JavaScript;
+export const url = 'https://docs.meteor.com';
+export const categories: Category[] = ['js'];
 
 export const defaultConfig = {
   fileMatch: ['(^|/)package\\.js$'],

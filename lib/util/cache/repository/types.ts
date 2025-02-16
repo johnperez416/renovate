@@ -1,14 +1,17 @@
 import type {
   RepositoryCacheConfig,
   RepositoryCacheType,
+  UpdateType,
 } from '../../../config/types';
 import type { PackageFile } from '../../../modules/manager/types';
 import type { RepoInitConfig } from '../../../workers/repository/init/types';
-import type { GitConflictsCache } from '../../git/types';
+import type { PrBlockedBy } from '../../../workers/types';
 
 export interface BaseBranchCache {
+  revision?: number;
   sha: string; // branch commit sha
   configHash: string; // object hash of config
+  extractionFingerprints: Record<string, string | undefined>; // matching manager fingerprints
   packageFiles: Record<string, PackageFile[]>; // extract result
 }
 
@@ -17,6 +20,8 @@ export interface BranchUpgradeCache {
   currentValue?: string;
   datasource?: string;
   depName?: string;
+  depType?: string;
+  displayPending?: unknown;
   fixedVersion?: string;
   currentVersion?: string;
   packageName?: string;
@@ -24,80 +29,128 @@ export interface BranchUpgradeCache {
   newValue?: string;
   newVersion?: string;
   sourceUrl?: string;
+  packageFile?: string;
+  remediationNotPossible?: unknown;
+  updateType?: UpdateType;
+}
+
+export interface OnboardingBranchCache {
+  defaultBranchSha: string;
+  onboardingBranchSha: string;
+  isConflicted: boolean;
+  isModified: boolean;
+  configFileName?: string;
+  configFileParsed?: string;
+}
+
+export interface ReconfigureBranchCache {
+  reconfigureBranchSha: string;
+  isConfigValid: boolean;
+}
+
+export interface PrCache {
+  /**
+   * Fingerprint of the PR body
+   */
+  fingerprint?: string; // Defunct
+  bodyFingerprint: string; // Actively used
+  /**
+   * last PR modified ISO timestamp
+   */
+  lastEdited: string;
 }
 
 export interface BranchCache {
   /**
-   *Whether this branch has automerge enabled
+   * Whether this branch has automerge enabled
    */
-  automerge: boolean;
+  automerge?: boolean;
   /**
-   * Hash of the manager fingerprints and the update branch config
+   * Name of base branch
    */
-  branchFingerprint?: string;
+  baseBranch?: string;
+  /**
+   * The base branch's most recent commit SHA
+   */
+  baseBranchSha?: string | null;
+  /**
+   * Hash of the manager fingerprints and the filtered update branch config
+   */
+  branchFingerprint?: string; // Defunct
+  commitFingerprint?: string; // Actively used
   /**
    * Branch name
    */
   branchName: string;
   /**
+   * Whether the update branch is behind base branch
+   */
+  isBehindBase?: boolean;
+  /**
+   * Whether the update branch is in conflict with base branch
+   */
+  isConflicted?: boolean;
+  /**
    * Whether a person not listed in gitIgnoredAuthors updated the branch.
    */
-  isModified: boolean;
+  isModified?: boolean;
   /**
-   * Parent commit of branch sha
+   *
    */
-  parentSha: string | null;
+  pristine?: boolean;
   /**
-   * Pr nunber of PR created from this branch
+   * Pr number of PR created from this branch
    */
   prNo: number | null;
   /**
    * The branch's most recent commit SHA
    */
-  sha: string | null;
+  sha?: string | null;
   /**
    * Details on the dependency upgrades that have been applied in this branch
    */
   upgrades: BranchUpgradeCache[];
+  /**
+   * Object that has PR info
+   */
+  prCache?: PrCache | null;
+
+  /**
+   * Dependency dashboard information
+   */
+  prBlockedBy?: PrBlockedBy;
+  prTitle?: string;
+  result?: string;
 }
 
 export interface RepoCacheData {
   configFileName?: string;
+  httpCache?: Record<string, unknown>;
   semanticCommits?: 'enabled' | 'disabled';
   branches?: BranchCache[];
   init?: RepoInitConfig;
   scan?: Record<string, BaseBranchCache>;
   lastPlatformAutomergeFailure?: string;
   platform?: {
-    github?: Record<string, unknown>;
+    gitea?: {
+      pullRequestsCache?: unknown;
+    };
+    github?: {
+      /**
+       * To avoid circular dependency problem, we use `unknown` type here.
+       */
+      pullRequestsCache?: unknown;
+      graphqlPageCache?: unknown;
+      issuesCache?: Record<number, unknown>;
+    };
+    bitbucket?: {
+      pullRequestsCache?: unknown;
+    };
   };
-  gitConflicts?: GitConflictsCache;
   prComments?: Record<number, Record<string, string>>;
+  onboardingBranchCache?: OnboardingBranchCache;
+  reconfigureBranchCache?: ReconfigureBranchCache;
 }
-
-export interface RepoCacheRecordV10 extends RepoCacheData {
-  repository?: string;
-  revision?: number;
-}
-
-export interface RepoCacheRecordV11 {
-  repository: string;
-  revision: number;
-  data: RepoCacheData;
-}
-
-export interface RepoCacheRecordV12 {
-  repository: string;
-  revision: number;
-  payload: string;
-  hash: string;
-}
-
-export interface RepoCacheRecordV13 extends RepoCacheRecordV12 {
-  fingerprint: string;
-}
-
-export type RepoCacheRecord = RepoCacheRecordV13;
 
 export interface RepoCache {
   load(): Promise<void>;

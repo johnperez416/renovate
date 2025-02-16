@@ -1,11 +1,15 @@
-import {
+import type {
   GitPullRequest,
   GitRepository,
   GitStatusContext,
+} from 'azure-devops-node-api/interfaces/GitInterfaces.js';
+import {
+  GitPullRequestMergeStrategy,
   PullRequestStatus,
 } from 'azure-devops-node-api/interfaces/GitInterfaces.js';
+import type { MergeStrategy } from '../../../config/types';
 import { logger } from '../../../logger';
-import { HostRule, PrState } from '../../../types';
+import type { HostRule, PrState } from '../../../types';
 import type { GitOptions } from '../../../types/git';
 import { addSecretForSanitizing } from '../../../util/sanitize';
 import { toBase64 } from '../../../util/string';
@@ -13,13 +17,13 @@ import { getPrBodyStruct } from '../pr-body';
 import type { AzurePr } from './types';
 
 export function getGitStatusContextCombinedName(
-  context: GitStatusContext | null | undefined
+  context: GitStatusContext | null | undefined,
 ): string | undefined {
   if (!context) {
     return undefined;
   }
   const combinedName = `${context.genre ? `${context.genre}/` : ''}${
-    // TODO: types (#7154)
+    // TODO: types (#22198)
     context.name!
   }`;
   logger.trace(`Got combined context name of ${combinedName}`);
@@ -27,7 +31,7 @@ export function getGitStatusContextCombinedName(
 }
 
 export function getGitStatusContextFromCombinedName(
-  context: string | undefined | null
+  context: string | undefined | null,
 ): GitStatusContext | undefined {
   if (!context) {
     return undefined;
@@ -46,7 +50,7 @@ export function getGitStatusContextFromCombinedName(
 }
 
 export function getBranchNameWithoutRefsheadsPrefix(
-  branchPath: string | undefined
+  branchPath: string | undefined,
 ): string | undefined {
   if (!branchPath) {
     logger.error(`getBranchNameWithoutRefsheadsPrefix(undefined)`);
@@ -54,7 +58,7 @@ export function getBranchNameWithoutRefsheadsPrefix(
   }
   if (!branchPath.startsWith('refs/heads/')) {
     logger.trace(
-      `The refs/heads/ name should have started with 'refs/heads/' but it didn't. (${branchPath})`
+      `The refs/heads/ name should have started with 'refs/heads/' but it didn't. (${branchPath})`,
     );
     return branchPath;
   }
@@ -62,7 +66,7 @@ export function getBranchNameWithoutRefsheadsPrefix(
 }
 
 export function getBranchNameWithoutRefsPrefix(
-  branchPath?: string
+  branchPath?: string,
 ): string | undefined {
   if (!branchPath) {
     logger.error(`getBranchNameWithoutRefsPrefix(undefined)`);
@@ -70,7 +74,7 @@ export function getBranchNameWithoutRefsPrefix(
   }
   if (!branchPath.startsWith('refs/')) {
     logger.trace(
-      `The ref name should have started with 'refs/' but it didn't. (${branchPath})`
+      `The ref name should have started with 'refs/' but it didn't. (${branchPath})`,
     );
     return branchPath;
   }
@@ -78,27 +82,25 @@ export function getBranchNameWithoutRefsPrefix(
 }
 
 const stateMap = {
-  [PullRequestStatus.Abandoned]: PrState.Closed,
-  [PullRequestStatus.Completed]: PrState.Merged,
+  [PullRequestStatus.Abandoned]: 'closed',
+  [PullRequestStatus.Completed]: 'merged',
 } as Record<PullRequestStatus, PrState | undefined>;
 
 export function getRenovatePRFormat(azurePr: GitPullRequest): AzurePr {
   const number = azurePr.pullRequestId;
-  // TODO: types (#7154)
-  const displayNumber = `Pull Request #${number!}`;
 
   const sourceBranch = getBranchNameWithoutRefsheadsPrefix(
-    azurePr.sourceRefName
+    azurePr.sourceRefName,
   );
   const targetBranch = getBranchNameWithoutRefsheadsPrefix(
-    azurePr.targetRefName
+    azurePr.targetRefName,
   );
   const bodyStruct = getPrBodyStruct(azurePr.description);
 
   const createdAt = azurePr.creationDate?.toISOString();
 
-  // TODO #7154
-  const state = stateMap[azurePr.status!] ?? PrState.Open;
+  // TODO #22198
+  const state = stateMap[azurePr.status!] ?? 'open';
 
   const sourceRefName = azurePr.sourceRefName;
 
@@ -107,7 +109,6 @@ export function getRenovatePRFormat(azurePr: GitPullRequest): AzurePr {
     sourceBranch,
     state,
     number,
-    displayNumber,
     bodyStruct,
     sourceRefName,
     targetBranch,
@@ -159,14 +160,14 @@ export function getProjectAndRepo(str: string): {
       repo: strSplit[1],
     };
   }
-  const msg = `${str} can be only structured this way : 'repository' or 'projectName/repository'!`;
-  logger.error(msg);
+  const msg = `Azure repository can be only structured this way : 'repository' or 'projectName/repository'!`;
+  logger.warn({ repository: str }, msg);
   throw new Error(msg);
 }
 
 export function getRepoByName(
   name: string,
-  repos: (GitRepository | null | undefined)[] | undefined | null
+  repos: (GitRepository | null | undefined)[] | undefined | null,
 ): GitRepository | null {
   logger.trace(`getRepoByName(${name})`);
 
@@ -177,10 +178,26 @@ export function getRepoByName(
   const foundRepo = repos?.find(
     (r) =>
       project === r?.project?.name?.toLowerCase() &&
-      repo === r?.name?.toLowerCase()
+      repo === r?.name?.toLowerCase(),
   );
   if (!foundRepo) {
     logger.debug(`Repo not found: ${name}`);
   }
   return foundRepo ?? null;
+}
+
+export function mapMergeStrategy(
+  mergeStrategy?: MergeStrategy,
+): GitPullRequestMergeStrategy {
+  switch (mergeStrategy) {
+    case 'rebase':
+    case 'fast-forward':
+      return GitPullRequestMergeStrategy.Rebase;
+    case 'merge-commit':
+      return GitPullRequestMergeStrategy.NoFastForward;
+    case 'squash':
+      return GitPullRequestMergeStrategy.Squash;
+    default:
+      return GitPullRequestMergeStrategy.NoFastForward;
+  }
 }

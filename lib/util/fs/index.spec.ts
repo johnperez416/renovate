@@ -1,12 +1,15 @@
 import _findUp from 'find-up';
 import fs from 'fs-extra';
-import tmp, { DirectoryResult } from 'tmp-promise';
+import type { DirectoryResult } from 'tmp-promise';
+import tmp from 'tmp-promise';
 import { join, resolve } from 'upath';
 import { mockedFunction } from '../../../test/util';
 import { GlobalConfig } from '../../config/global';
 import {
   cachePathExists,
+  cachePathIsFile,
   chmodLocalFile,
+  createCacheReadStream,
   createCacheWriteStream,
   deleteLocalFile,
   ensureCacheDir,
@@ -14,8 +17,10 @@ import {
   ensureLocalDir,
   findLocalSiblingOrParent,
   findUpLocal,
+  getLocalFiles,
   getParentDir,
   getSiblingFileName,
+  isValidLocalPath,
   listCacheDir,
   localPathExists,
   localPathIsFile,
@@ -29,12 +34,15 @@ import {
   readSystemFile,
   renameLocalFile,
   rmCache,
+  statCacheFile,
   statLocalFile,
   writeLocalFile,
+  writeSystemFile,
 } from '.';
 
 jest.mock('../exec/env');
 jest.mock('find-up');
+jest.mock('../git');
 
 const findUp = mockedFunction(_findUp);
 
@@ -68,7 +76,7 @@ describe('util/fs/index', () => {
   });
 
   describe('getParentDir', () => {
-    test.each`
+    it.each`
       dir            | expected
       ${'/foo/bar/'} | ${'/foo'}
       ${'/foo/bar'}  | ${'/foo'}
@@ -89,7 +97,7 @@ describe('util/fs/index', () => {
   });
 
   describe('getSiblingFileName', () => {
-    test.each`
+    it.each`
       file          | sibling  | expected
       ${'/foo/bar'} | ${'baz'} | ${'/foo/baz'}
       ${'foo/bar'}  | ${'baz'} | ${'foo/baz'}
@@ -131,6 +139,11 @@ describe('util/fs/index', () => {
   });
 
   describe('deleteLocalFile', () => {
+    it('throws if platform is local', async () => {
+      GlobalConfig.set({ platform: 'local' });
+      await expect(deleteLocalFile('foo/bar/file.txt')).rejects.toThrow();
+    });
+
     it('deletes file', async () => {
       const filePath = `${localDir}/foo/bar/file.txt`;
       await fs.outputFile(filePath, 'foobar');
@@ -203,7 +216,17 @@ describe('util/fs/index', () => {
     });
 
     it('returns false', async () => {
-      expect(await localPathExists('file.txt')).toBe(false);
+      expect(await localPathExists('file.txt')).toBeFalse();
+    });
+  });
+
+  describe('isLocalPath', () => {
+    it('returns true for valid local path', () => {
+      expect(isValidLocalPath('./foo/...')).toBeTrue();
+    });
+
+    it('returns false', () => {
+      expect(isValidLocalPath('/file.txt')).toBeFalse();
     });
   });
 
@@ -212,7 +235,7 @@ describe('util/fs/index', () => {
       await writeLocalFile('test/test.txt', '');
       await fs.symlink(
         join(localDir, 'test/test.txt'),
-        join(localDir, 'test/test')
+        join(localDir, 'test/test'),
       );
 
       const result = await readLocalSymlink('test/test');
@@ -224,7 +247,7 @@ describe('util/fs/index', () => {
       await writeLocalFile('test/test.txt', '');
       await fs.symlink(
         join(localDir, 'test/test.txt'),
-        join(localDir, 'test/test')
+        join(localDir, 'test/test'),
       );
 
       const notExistsResult = await readLocalSymlink('test/not-exists');
@@ -239,22 +262,22 @@ describe('util/fs/index', () => {
       await writeLocalFile('Cargo.lock', 'bar');
 
       expect(
-        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.lock')
+        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.lock'),
       ).toBe('Cargo.lock');
       expect(
-        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.mock')
+        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.mock'),
       ).toBeNull();
 
       await writeLocalFile('crates/one/Cargo.lock', '');
 
       expect(
-        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.lock')
+        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.lock'),
       ).toBe('crates/one/Cargo.lock');
       expect(await findLocalSiblingOrParent('crates/one', 'Cargo.lock')).toBe(
-        'Cargo.lock'
+        'Cargo.lock',
       );
       expect(
-        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.mock')
+        await findLocalSiblingOrParent('crates/one/Cargo.toml', 'Cargo.mock'),
       ).toBeNull();
     });
 
@@ -309,6 +332,29 @@ describe('util/fs/index', () => {
       });
       await write;
       expect(await fs.readFile(path, 'utf8')).toBe('bar');
+    });
+  });
+
+  describe('createCacheReadStream', () => {
+    it('creates read stream', async () => {
+      const path = `${cacheDir}/file.txt`;
+      const fileContent = 'foo';
+      await fs.outputFile(path, fileContent);
+
+      const stream = createCacheReadStream('file.txt');
+      expect(stream).toBeInstanceOf(fs.ReadStream);
+
+      let data = '';
+      stream.on('data', (chunk) => {
+        data += chunk.toString();
+      });
+
+      await new Promise((resolve, reject) => {
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+
+      expect(data).toBe(fileContent);
     });
   });
 
@@ -411,6 +457,17 @@ describe('util/fs/index', () => {
     });
   });
 
+  describe('statCacheFile', () => {
+    it('returns stat object', async () => {
+      expect(await statCacheFile('foo')).toBeNull();
+
+      await fs.outputFile(`${cacheDir}/foo`, 'foobar');
+      const stat = await statCacheFile('foo');
+      expect(stat).toBeTruthy();
+      expect(stat!.isFile()).toBeTrue();
+    });
+  });
+
   describe('listCacheDir', () => {
     it('lists directory', async () => {
       await fs.outputFile(`${cacheDir}/foo/bar.txt`, 'foobar');
@@ -435,12 +492,18 @@ describe('util/fs/index', () => {
     });
   });
 
+  describe('cachePathIsFile', () => {
+    it('returns false if does not exist', async () => {
+      await expect(cachePathIsFile(`a/a/file.txt`)).resolves.toBe(false);
+    });
+  });
+
   describe('readCacheFile', () => {
     it('reads file', async () => {
       await fs.outputFile(`${cacheDir}/foo/bar/file.txt`, 'foobar');
       expect(await readCacheFile(`foo/bar/file.txt`, 'utf8')).toBe('foobar');
       expect(await readCacheFile(`foo/bar/file.txt`)).toEqual(
-        Buffer.from('foobar')
+        Buffer.from('foobar'),
       );
     });
   });
@@ -459,6 +522,35 @@ describe('util/fs/index', () => {
       await fs.outputFile(path, 'foobar', { encoding: 'utf8' });
       expect(await readSystemFile(path, 'utf8')).toBe('foobar');
       expect(await readSystemFile(path)).toEqual(Buffer.from('foobar'));
+    });
+  });
+
+  describe('writeSystemFile', () => {
+    it('writes file', async () => {
+      const path = `${tmpDir}/file.txt`;
+      await writeSystemFile(path, 'foobar');
+      expect(await readSystemFile(path)).toEqual(Buffer.from('foobar'));
+    });
+  });
+
+  describe('getLocalFiles', () => {
+    it('reads list of files from local fs', async () => {
+      const fileContentMap = {
+        file1: 'foobar',
+        file2: 'foobar2',
+      };
+
+      await fs.outputFile(`${localDir}/file1`, fileContentMap.file1);
+      await fs.outputFile(`${localDir}/file2`, fileContentMap.file2);
+      const res = await getLocalFiles(Object.keys(fileContentMap));
+      expect(res).toStrictEqual(fileContentMap);
+    });
+
+    it('returns null as content if file is not found', async () => {
+      const res = await getLocalFiles(['invalidfile']);
+      expect(res).toStrictEqual({
+        invalidfile: null,
+      });
     });
   });
 });

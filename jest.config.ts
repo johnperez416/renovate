@@ -1,23 +1,14 @@
-import os from 'os';
-import v8 from 'v8';
-import type { InitialOptionsTsJest } from 'ts-jest/dist/types';
+import os from 'node:os';
+import v8 from 'node:v8';
+import { testShards } from './tools/test/shards';
+import type { JestConfig, JestShardedSubconfig } from './tools/test/types';
+import { getCoverageIgnorePatterns } from './tools/test/utils';
 
 const ci = !!process.env.CI;
-
-type JestConfig = InitialOptionsTsJest & {
-  // https://github.com/renovatebot/renovate/issues/17034
-  workerIdleMemoryLimit?: string;
-};
 
 const cpus = os.cpus();
 const mem = os.totalmem();
 const stats = v8.getHeapStatistics();
-
-process.stderr.write(`Host stats:
-  Cpus:      ${cpus.length}
-  Memory:    ${(mem / 1024 / 1024 / 1024).toFixed(2)} GB
-  HeapLimit: ${(stats.heap_size_limit / 1024 / 1024 / 1024).toFixed(2)} GB
-`);
 
 /**
  * https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners#supported-runners-and-hardware-resources
@@ -37,27 +28,82 @@ function jestGithubRunnerSpecs(): JestConfig {
   };
 }
 
+/**
+ * Convert match pattern to a form that matches on file with `.ts` or `.spec.ts` extension.
+ */
+function normalizePattern(pattern: string, suffix: '.ts' | '.spec.ts'): string {
+  return pattern.endsWith('.spec.ts')
+    ? pattern.replace(/\.spec\.ts$/, suffix)
+    : `${pattern}/**/*${suffix}`;
+}
+
+/**
+ * Generates Jest config for sharded test run.
+ *
+ * If `TEST_SHARD` environment variable is not set,
+ * it falls back to the provided config.
+ *
+ * Otherwise, `fallback` value is used to determine some defaults.
+ */
+function configureShardingOrFallbackTo(
+  fallback: JestShardedSubconfig,
+): JestShardedSubconfig {
+  const shardKey = process.env.TEST_SHARD;
+  if (!shardKey) {
+    return fallback;
+  }
+
+  if (!testShards[shardKey]) {
+    const keys = Object.keys(testShards).join(', ');
+    throw new Error(
+      `Unknown value for TEST_SHARD: ${shardKey} (possible values: ${keys})`,
+    );
+  }
+
+  const testMatch: string[] = [];
+
+  for (const [key, { matchPaths: patterns }] of Object.entries(testShards)) {
+    if (key === shardKey) {
+      const testMatchPatterns = patterns.map((pattern) => {
+        const filePattern = normalizePattern(pattern, '.spec.ts');
+        return `<rootDir>/${filePattern}`;
+      });
+      testMatch.push(...testMatchPatterns);
+      break;
+    }
+
+    const testMatchPatterns = patterns.map((pattern) => {
+      const filePattern = normalizePattern(pattern, '.spec.ts');
+      return `!**/${filePattern}`;
+    });
+    testMatch.push(...testMatchPatterns);
+  }
+
+  testMatch.reverse();
+
+  const coverageDirectory = `./coverage/shard/${shardKey}`;
+  return {
+    testMatch,
+    coverageDirectory,
+  };
+}
+
 const config: JestConfig = {
-  cacheDirectory: '.cache/jest',
-  coverageDirectory: './coverage',
-  collectCoverage: true,
+  ...configureShardingOrFallbackTo({
+    coverageDirectory: './coverage',
+  }),
   collectCoverageFrom: [
     'lib/**/*.{js,ts}',
     '!lib/**/*.{d,spec}.ts',
     '!lib/**/{__fixtures__,__mocks__,__testutil__,test}/**/*.{js,ts}',
     '!lib/**/types.ts',
   ],
+  coveragePathIgnorePatterns: getCoverageIgnorePatterns(),
+  cacheDirectory: '.cache/jest',
+  collectCoverage: true,
   coverageReporters: ci
-    ? ['html', 'json', 'text-summary']
-    : ['html', 'text-summary'],
-  coverageThreshold: {
-    global: {
-      branches: 98,
-      functions: 100,
-      lines: 100,
-      statements: 100,
-    },
-  },
+    ? ['lcovonly', 'json']
+    : ['html', 'text-summary', 'json'],
   transform: {
     '\\.ts$': [
       'ts-jest',
@@ -68,8 +114,14 @@ const config: JestConfig = {
       },
     ],
   },
-  modulePathIgnorePatterns: ['<rootDir>/dist/', '/__fixtures__/'],
+  modulePathIgnorePatterns: [
+    '<rootDir>/dist/',
+    '/__fixtures__/',
+    '/__mocks__/',
+  ],
   reporters: ci ? ['default', 'github-actions'] : ['default'],
+  resetMocks: true,
+  globalSetup: '<rootDir>/test/global-setup.ts',
   setupFilesAfterEnv: [
     'jest-extended/all',
     'expect-more-jest',
@@ -87,3 +139,9 @@ const config: JestConfig = {
 };
 
 export default config;
+
+process.stderr.write(`Host stats:
+    Cpus:      ${cpus.length}
+    Memory:    ${(mem / 1024 / 1024 / 1024).toFixed(2)} GB
+    HeapLimit: ${(stats.heap_size_limit / 1024 / 1024 / 1024).toFixed(2)} GB
+  `);

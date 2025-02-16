@@ -1,10 +1,11 @@
-import { ProgrammingLanguage } from '../../../constants';
+import type { Category } from '../../../constants';
 import { DockerDatasource } from '../../datasource/docker';
 import { extractPackageFile } from './extract';
 
-export const language = ProgrammingLanguage.Docker;
-
 export { extractPackageFile };
+
+export const url = 'https://docs.docker.com/compose';
+export const categories: Category[] = ['docker'];
 
 export const defaultConfig = {
   fileMatch: ['(^|/)(?:docker-)?compose[^/]*\\.ya?ml$'],
