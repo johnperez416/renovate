@@ -1,11 +1,11 @@
-import URL from 'url';
 import is from '@sindresorhus/is';
 import parse from 'github-url-from-git';
-import { DateTime } from 'luxon';
 import { detectPlatform } from '../../util/common';
+import { parseGitUrl } from '../../util/git/url';
 import * as hostRules from '../../util/host-rules';
 import { regEx } from '../../util/regex';
-import { parseUrl, trimTrailingSlash, validateUrl } from '../../util/url';
+import { asTimestamp } from '../../util/timestamp';
+import { isHttpUrl, parseUrl, trimTrailingSlash } from '../../util/url';
 import { manualChangelogUrls, manualSourceUrls } from './metadata-manual';
 import type { ReleaseResult } from './types';
 
@@ -13,22 +13,23 @@ const githubPages = regEx('^https://([^.]+).github.com/([^/]+)$');
 const gitPrefix = regEx('^git:/?/?');
 
 export function massageUrl(sourceUrl: string): string {
-  const parsedUrl = URL.parse(sourceUrl);
-  if (!parsedUrl?.hostname) {
+  // Replace git@ sourceUrl with https so hostname can be parsed
+  const massagedUrl = massageGitAtUrl(sourceUrl);
+
+  // Check if URL is valid
+  const parsedUrl = parseUrl(massagedUrl);
+  if (!parsedUrl) {
     return '';
   }
-  if (parsedUrl.hostname.includes('gitlab')) {
+
+  if (detectPlatform(massagedUrl) === 'gitlab') {
     return massageGitlabUrl(sourceUrl);
   }
   return massageGithubUrl(sourceUrl);
 }
 
 export function massageGithubUrl(url: string): string {
-  let massagedUrl = url;
-
-  if (url.startsWith('git@')) {
-    massagedUrl = url.replace(':', '/').replace('git@', 'https://');
-  }
+  const massagedUrl = massageGitAtUrl(url);
 
   return massagedUrl
     .replace('http:', 'https:')
@@ -44,7 +45,9 @@ export function massageGithubUrl(url: string): string {
 }
 
 function massageGitlabUrl(url: string): string {
-  return url
+  const massagedUrl = massageGitAtUrl(url);
+
+  return massagedUrl
     .replace('http:', 'https:')
     .replace(gitPrefix, 'https://')
     .replace(regEx(/\/tree\/.*$/i), '')
@@ -52,49 +55,20 @@ function massageGitlabUrl(url: string): string {
     .replace('.git', '');
 }
 
-export function normalizeDate(input: any): string | null {
-  if (
-    typeof input === 'number' &&
-    !Number.isNaN(input) &&
-    input > 0 &&
-    input <= Date.now() + 24 * 60 * 60 * 1000
-  ) {
-    return new Date(input).toISOString();
+function massageGitAtUrl(url: string): string {
+  let massagedUrl = url;
+
+  if (url.startsWith('git@')) {
+    massagedUrl = url.replace(':', '/').replace('git@', 'https://');
   }
-
-  if (typeof input === 'string') {
-    // `Date.parse()` is more permissive, but it assumes local time zone
-    // for inputs like `2021-01-01`.
-    //
-    // Here we try to parse with default UTC with fallback to `Date.parse()`.
-    //
-    // It allows us not to care about machine timezones so much, though
-    // some misinterpretation is still possible, but only if both:
-    //
-    //   1. Renovate machine is configured for non-UTC zone
-    //   2. Format of `input` is very exotic
-    //      (from `DateTime.fromISO()` perspective)
-    //
-    const luxonDate = DateTime.fromISO(input, { zone: 'UTC' });
-    if (luxonDate.isValid) {
-      return luxonDate.toISO();
-    }
-
-    return normalizeDate(Date.parse(input));
-  }
-
-  if (input instanceof Date) {
-    return input.toISOString();
-  }
-
-  return null;
+  return massagedUrl;
 }
 
 function massageTimestamps(dep: ReleaseResult): void {
   for (const release of dep.releases || []) {
     let { releaseTimestamp } = release;
     delete release.releaseTimestamp;
-    releaseTimestamp = normalizeDate(releaseTimestamp);
+    releaseTimestamp = asTimestamp(releaseTimestamp);
     if (releaseTimestamp) {
       release.releaseTimestamp = releaseTimestamp;
     }
@@ -104,7 +78,7 @@ function massageTimestamps(dep: ReleaseResult): void {
 export function addMetaData(
   dep: ReleaseResult,
   datasource: string,
-  packageName: string
+  packageName: string,
 ): void {
   massageTimestamps(dep);
 
@@ -118,6 +92,18 @@ export function addMetaData(
   const manualSourceUrl = manualSourceUrls[datasource]?.[packageNameLowercase];
   if (manualSourceUrl) {
     dep.sourceUrl = manualSourceUrl;
+  }
+
+  if (dep.sourceUrl && !dep.sourceDirectory) {
+    try {
+      const parsed = parseGitUrl(dep.sourceUrl);
+      if (parsed.filepathtype === 'tree' && parsed.filepath !== '') {
+        dep.sourceUrl = parsed.toString();
+        dep.sourceDirectory = parsed.filepath;
+      }
+    } catch {
+      // ignore invalid urls
+    }
   }
 
   if (
@@ -164,7 +150,7 @@ export function addMetaData(
   ];
   for (const urlKey of urlKeys) {
     const urlVal = dep[urlKey];
-    if (is.string(urlVal) && validateUrl(urlVal.trim())) {
+    if (is.string(urlVal) && isHttpUrl(urlVal.trim())) {
       dep[urlKey] = urlVal.trim() as never;
     } else {
       delete dep[urlKey];
@@ -181,7 +167,7 @@ export function addMetaData(
  */
 export function shouldDeleteHomepage(
   sourceUrl: string | null | undefined,
-  homepage: string | undefined
+  homepage: string | undefined,
 ): boolean {
   if (is.nullOrUndefined(sourceUrl) || is.undefined(homepage)) {
     return false;

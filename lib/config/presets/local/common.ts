@@ -7,19 +7,19 @@ import { PRESET_DEP_NOT_FOUND, fetchPreset, parsePreset } from '../util';
 export async function fetchJSONFile(
   repo: string,
   fileName: string,
-  _endpoint?: string
+  _endpoint?: string,
+  tag?: string,
 ): Promise<Preset> {
   let raw: string | null;
   try {
-    raw = await platform.getRawFile(fileName, repo);
+    raw = await platform.getRawFile(fileName, repo, tag ?? undefined);
   } catch (err) {
     if (err instanceof ExternalHostError) {
       throw err;
     }
 
     logger.debug(
-      { err, repo, fileName },
-      `Failed to retrieve ${fileName} from repo ${repo}`
+      `Preset file ${fileName} not found in ${repo}: ${err.message}}`,
     );
 
     throw new Error(PRESET_DEP_NOT_FOUND);
@@ -29,7 +29,7 @@ export async function fetchJSONFile(
     throw new Error(PRESET_DEP_NOT_FOUND);
   }
 
-  return parsePreset(raw);
+  return parsePreset(raw, fileName);
 }
 
 export function getPresetFromEndpoint(
@@ -37,7 +37,7 @@ export function getPresetFromEndpoint(
   filePreset: string,
   presetPath: string | undefined,
   endpoint: string,
-  tag?: string | null
+  tag?: string,
 ): Promise<Preset | undefined> {
   return fetchPreset({
     repo,

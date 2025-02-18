@@ -1,16 +1,26 @@
 import { lang, query as q } from 'good-enough-parser';
 import { logger } from '../../../logger';
-import { regEx } from '../../../util/regex';
+import { readLocalFile } from '../../../util/fs';
+import { newlineRegex, regEx } from '../../../util/regex';
 import { parseUrl } from '../../../util/url';
+import { GithubReleasesDatasource } from '../../datasource/github-releases';
 import { MavenDatasource } from '../../datasource/maven';
+import { MAVEN_REPO } from '../../datasource/maven/common';
 import { SbtPackageDatasource } from '../../datasource/sbt-package';
 import {
   SBT_PLUGINS_REPO,
   SbtPluginDatasource,
 } from '../../datasource/sbt-plugin';
-import { MAVEN_REPO } from '../gradle/common';
-import type { PackageDependency, PackageFile } from '../types';
-import { normalizeScalaVersion } from './util';
+import { get } from '../../versioning';
+import * as mavenVersioning from '../../versioning/maven';
+import * as semverVersioning from '../../versioning/semver';
+import type {
+  ExtractConfig,
+  PackageDependency,
+  PackageFile,
+  PackageFileContent,
+} from '../types';
+import { normalizeScalaVersion, sortPackageFiles } from './util';
 
 type Vars = Record<string, string>;
 
@@ -29,10 +39,18 @@ interface Ctx {
   currentVarName?: string;
   depType?: string;
   useScalaVersion?: boolean;
-  groupName?: string;
+  variableName?: string;
 }
 
 const scala = lang.createLang('scala');
+
+const sbtVersionRegex = regEx(
+  'sbt\\.version *= *(?<version>\\d+\\.\\d+\\.\\d+)',
+);
+
+const sbtProxyUrlRegex = regEx(
+  /^\s*(?<repoName>\S+):\s+(?<proxy>https?:\/\/[\w./-]+)/,
+);
 
 const scalaVersionMatch = q
   .sym<Ctx>('scalaVersion')
@@ -45,14 +63,21 @@ const scalaVersionMatch = q
         ctx.scalaVersion = scalaVersion;
       }
       return ctx;
-    })
+    }),
   )
   .handler((ctx) => {
     if (ctx.scalaVersion) {
+      const version = get(mavenVersioning.id);
+
+      let packageName = 'org.scala-lang:scala-library';
+      if (version.getMajor(ctx.scalaVersion) === 3) {
+        packageName = 'org.scala-lang:scala3-library_3';
+      }
+
       const dep: PackageDependency = {
         datasource: MavenDatasource.id,
         depName: 'scala',
-        packageName: 'org.scala-lang:scala-library',
+        packageName,
         currentValue: ctx.scalaVersion,
         separateMinorPatch: true,
       };
@@ -76,13 +101,15 @@ const packageFileVersionMatch = q
         ctx.packageFileVersion = packageFileVersion;
       }
       return ctx;
-    })
+    }),
   );
 
-const variableNameMatch = q.sym<Ctx>((ctx, { value: varName }) => ({
-  ...ctx,
-  currentVarName: varName,
-}));
+const variableNameMatch = q
+  .sym<Ctx>((ctx, { value: varName }) => ({
+    ...ctx,
+    currentVarName: varName,
+  }))
+  .opt(q.op<Ctx>(':').sym('String'));
 
 const variableValueMatch = q.str<Ctx>((ctx, { value }) => {
   ctx.vars[ctx.currentVarName!] = value;
@@ -96,7 +123,7 @@ const variableDefinitionMatch = q
   .alt(
     q.sym<Ctx>('lazy').join(assignmentMatch),
     assignmentMatch,
-    variableNameMatch.op(':=')
+    variableNameMatch.op(':='),
   )
   .join(variableValueMatch);
 
@@ -108,7 +135,7 @@ const groupIdMatch = q.alt<Ctx>(
     }
     return ctx;
   }),
-  q.str<Ctx>((ctx, { value: groupId }) => ({ ...ctx, groupId }))
+  q.str<Ctx>((ctx, { value: groupId }) => ({ ...ctx, groupId })),
 );
 
 const artifactIdMatch = q.alt<Ctx>(
@@ -119,7 +146,7 @@ const artifactIdMatch = q.alt<Ctx>(
     }
     return ctx;
   }),
-  q.str<Ctx>((ctx, { value: artifactId }) => ({ ...ctx, artifactId }))
+  q.str<Ctx>((ctx, { value: artifactId }) => ({ ...ctx, artifactId })),
 );
 
 const versionMatch = q.alt<Ctx>(
@@ -127,11 +154,11 @@ const versionMatch = q.alt<Ctx>(
     const currentValue = ctx.vars[varName];
     if (currentValue) {
       ctx.currentValue = currentValue;
-      ctx.groupName = varName;
+      ctx.variableName = varName;
     }
     return ctx;
   }),
-  q.str<Ctx>((ctx, { value: currentValue }) => ({ ...ctx, currentValue }))
+  q.str<Ctx>((ctx, { value: currentValue }) => ({ ...ctx, currentValue })),
 );
 
 const simpleDependencyMatch = groupIdMatch
@@ -147,6 +174,13 @@ const versionedDependencyMatch = groupIdMatch
   .op('%')
   .join(versionMatch);
 
+const crossDependencyMatch = groupIdMatch
+  .op('%%%')
+  .join(artifactIdMatch)
+  .handler((ctx) => ({ ...ctx, useScalaVersion: true }))
+  .op('%')
+  .join(versionMatch);
+
 function depHandler(ctx: Ctx): Ctx {
   const {
     scalaVersion,
@@ -155,7 +189,7 @@ function depHandler(ctx: Ctx): Ctx {
     currentValue,
     useScalaVersion,
     depType,
-    groupName,
+    variableName,
   } = ctx;
 
   delete ctx.groupId;
@@ -163,7 +197,7 @@ function depHandler(ctx: Ctx): Ctx {
   delete ctx.currentValue;
   delete ctx.useScalaVersion;
   delete ctx.depType;
-  delete ctx.groupName;
+  delete ctx.variableName;
 
   const depName = `${groupId!}:${artifactId!}`;
 
@@ -183,8 +217,9 @@ function depHandler(ctx: Ctx): Ctx {
     dep.datasource = SbtPluginDatasource.id;
   }
 
-  if (groupName) {
-    dep.groupName = groupName;
+  if (variableName) {
+    dep.sharedVariableName = variableName;
+    dep.variableName = variableName;
   }
 
   ctx.deps.push(dep);
@@ -198,13 +233,13 @@ function depTypeHandler(ctx: Ctx, { value: depType }: { value: string }): Ctx {
 
 const sbtPackageMatch = q
   .opt<Ctx>(q.opt(q.sym<Ctx>('lazy')).sym('val').sym().op('='))
-  .alt(simpleDependencyMatch, versionedDependencyMatch)
+  .alt(crossDependencyMatch, simpleDependencyMatch, versionedDependencyMatch)
   .opt(
     q.alt<Ctx>(
       q.sym<Ctx>('classifier').str(depTypeHandler),
       q.op<Ctx>('%').sym(depTypeHandler),
-      q.op<Ctx>('%').str(depTypeHandler)
-    )
+      q.op<Ctx>('%').str(depTypeHandler),
+    ),
   )
   .handler(depHandler);
 
@@ -237,15 +272,12 @@ const addResolverMatch = q.sym<Ctx>('resolvers').alt(
     type: 'wrapped-tree',
     maxDepth: 1,
     search: resolverMatch,
-  })
+  }),
 );
 
 function registryUrlHandler(ctx: Ctx): Ctx {
   for (const dep of ctx.deps) {
     dep.registryUrls = [...ctx.registryUrls];
-    if (dep.depType === 'plugin') {
-      dep.registryUrls.push(SBT_PLUGINS_REPO);
-    }
   }
   return ctx;
 }
@@ -259,36 +291,138 @@ const query = q.tree<Ctx>({
     sbtPackageMatch,
     sbtPluginMatch,
     addResolverMatch,
-    variableDefinitionMatch
+    variableDefinitionMatch,
   ),
   postHandler: registryUrlHandler,
 });
 
+export function extractProxyUrls(
+  content: string,
+  packageFile: string,
+): string[] {
+  const extractedProxyUrls: string[] = [];
+  logger.debug(`Parsing proxy repository file ${packageFile}`);
+  for (const line of content.split(newlineRegex)) {
+    const extraction = sbtProxyUrlRegex.exec(line);
+    if (extraction?.groups?.proxy) {
+      extractedProxyUrls.push(extraction.groups.proxy);
+    } else if (line.trim() === 'maven-central') {
+      extractedProxyUrls.push(MAVEN_REPO);
+    }
+  }
+  return extractedProxyUrls;
+}
+
 export function extractPackageFile(
   content: string,
-  _packageFile: string
-): PackageFile | null {
+  packageFile: string,
+): PackageFileContent | null {
+  return extractPackageFileInternal(content, packageFile);
+}
+
+function extractPackageFileInternal(
+  content: string,
+  packageFile: string,
+  ctxScalaVersion?: string,
+): PackageFileContent | null {
+  if (
+    packageFile === 'project/build.properties' ||
+    packageFile.endsWith('/project/build.properties')
+  ) {
+    const regexResult = sbtVersionRegex.exec(content);
+    const sbtVersion = regexResult?.groups?.version;
+    const matchString = regexResult?.[0];
+    if (sbtVersion) {
+      const sbtDependency: PackageDependency = {
+        datasource: GithubReleasesDatasource.id,
+        depName: 'sbt/sbt',
+        packageName: 'sbt/sbt',
+        versioning: semverVersioning.id,
+        currentValue: sbtVersion,
+        replaceString: matchString,
+        extractVersion: '^v(?<version>\\S+)',
+        registryUrls: [],
+      };
+
+      return {
+        deps: [sbtDependency],
+      };
+    } else {
+      return null;
+    }
+  }
+
   let parsedResult: Ctx | null = null;
 
   try {
     parsedResult = scala.query(content, query, {
       vars: {},
       deps: [],
-      registryUrls: [MAVEN_REPO],
+      registryUrls: [],
+      scalaVersion: ctxScalaVersion,
     });
   } catch (err) /* istanbul ignore next */ {
-    logger.warn({ err }, 'Sbt parsing error');
+    logger.debug({ err, packageFile }, 'Sbt parsing error');
   }
 
   if (!parsedResult) {
     return null;
   }
 
-  const { deps, packageFileVersion } = parsedResult;
+  const { deps, scalaVersion, packageFileVersion } = parsedResult;
 
   if (!deps.length) {
     return null;
   }
 
-  return { deps, packageFileVersion };
+  return { deps, packageFileVersion, managerData: { scalaVersion } };
+}
+
+export async function extractAllPackageFiles(
+  _config: ExtractConfig,
+  packageFiles: string[],
+): Promise<PackageFile[]> {
+  const packages: PackageFile[] = [];
+  const proxyUrls: string[] = [];
+  let ctxScalaVersion: string | undefined;
+
+  const sortedPackageFiles = sortPackageFiles(packageFiles);
+
+  for (const packageFile of sortedPackageFiles) {
+    const content = await readLocalFile(packageFile, 'utf8');
+    if (!content) {
+      logger.debug({ packageFile }, 'packageFile has no content');
+      continue;
+    }
+    if (packageFile === 'repositories') {
+      const urls = extractProxyUrls(content, packageFile);
+      proxyUrls.push(...urls);
+    } else {
+      const pkg = extractPackageFileInternal(
+        content,
+        packageFile,
+        ctxScalaVersion,
+      );
+      if (pkg) {
+        packages.push({ deps: pkg.deps, packageFile });
+        if (pkg.managerData?.scalaVersion) {
+          ctxScalaVersion = pkg.managerData.scalaVersion;
+        }
+      }
+    }
+  }
+  for (const pkg of packages) {
+    for (const dep of pkg.deps) {
+      if (dep.datasource !== GithubReleasesDatasource.id) {
+        if (proxyUrls.length > 0) {
+          dep.registryUrls!.unshift(...proxyUrls);
+        } else if (dep.depType === 'plugin') {
+          dep.registryUrls!.unshift(SBT_PLUGINS_REPO, MAVEN_REPO);
+        } else {
+          dep.registryUrls!.unshift(MAVEN_REPO);
+        }
+      }
+    }
+  }
+  return packages;
 }

@@ -1,8 +1,8 @@
 import { newlineRegex } from '../../../util/regex';
 import { GitTagsDatasource } from '../../datasource/git-tags';
-import type { PackageDependency, PackageFile } from '../types';
+import type { PackageDependency, PackageFileContent } from '../types';
 
-export function extractPackageFile(content: string): PackageFile | null {
+export function extractPackageFile(content: string): PackageFileContent | null {
   const deps: PackageDependency[] = [];
 
   for (const line of content.split(newlineRegex).map((s) => s.trim())) {
@@ -31,12 +31,12 @@ function handleDepInMintfile(line: string): PackageDependency {
   if (!line.includes('@')) {
     return {
       depName: line,
-      skipReason: 'no-version',
+      skipReason: 'unspecified-version',
     };
   }
   const [depName, currentVersion] = line.split('@').map((s) => s.trim());
   return {
-    depName: depName,
+    depName,
     currentValue: currentVersion,
     datasource: GitTagsDatasource.id,
     packageName: `https://github.com/${depName}.git`,

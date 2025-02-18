@@ -1,3 +1,4 @@
+import type { LongCommitSha } from '../../../util/git/types';
 import type { Pr, PrBodyStruct } from '../types';
 
 // https://developer.github.com/v3/repos/statuses
@@ -20,10 +21,20 @@ export interface Comment {
   body: string;
 }
 
+export interface GhRestRepo {
+  full_name: string;
+  default_branch: string;
+  owner: {
+    login: string;
+  };
+  archived: boolean;
+  topics: string[];
+}
+
 export interface GhRestPr {
   head: {
     ref: string;
-    sha: string;
+    sha: LongCommitSha;
     repo: {
       full_name: string;
       pushed_at?: string;
@@ -33,6 +44,7 @@ export interface GhRestPr {
     repo: {
       pushed_at?: string;
     };
+    ref: string;
   };
   mergeable_state: string;
   number: number;
@@ -54,12 +66,14 @@ export interface GhRestPr {
 }
 
 export interface GhPr extends Pr {
-  updatedAt: string;
+  updated_at: string;
+  node_id: string;
 }
 
 export interface UserDetails {
   username: string;
   name: string;
+  id: number;
 }
 
 export interface PlatformConfig {
@@ -77,21 +91,23 @@ export interface LocalRepoConfig {
   repositoryName: string;
   pushProtection: boolean;
   prReviewsRequired: boolean;
-  repoForceRebase?: boolean;
+  branchForceRebase?: Record<string, boolean>;
   parentRepo: string | null;
-  forkMode?: boolean;
+  forkOrg?: string;
   forkToken?: string;
+  forkCreation?: boolean;
   prList: GhPr[] | null;
-  issueList: any[] | null;
   mergeMethod: 'rebase' | 'squash' | 'merge';
   defaultBranch: string;
   repositoryOwner: string;
   repository: string | null;
   renovateUsername: string | undefined;
+  renovateForkUser: string | undefined;
   productLinks: any;
   ignorePrAuthor: boolean;
   autoMergeAllowed: boolean;
   hasIssuesEnabled: boolean;
+  hasVulnerabilityAlertsEnabled: boolean;
 }
 
 export type BranchProtection = any;
@@ -99,10 +115,14 @@ export type BranchProtection = any;
 export interface GhRepo {
   id: string;
   isFork: boolean;
+  parent?: {
+    nameWithOwner: string;
+  };
   isArchived: boolean;
   nameWithOwner: string;
   autoMergeAllowed: boolean;
   hasIssuesEnabled: boolean;
+  hasVulnerabilityAlertsEnabled: boolean;
   mergeCommitAllowed: boolean;
   rebaseMergeAllowed: boolean;
   squashMergeAllowed: boolean;
@@ -112,6 +132,7 @@ export interface GhRepo {
       oid: string;
     };
   };
+  issues: { nodes: unknown[] };
 }
 
 export interface GhAutomergeResponse {

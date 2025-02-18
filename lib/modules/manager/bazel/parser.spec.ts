@@ -1,69 +1,85 @@
+import { codeBlock } from 'common-tags';
 import { parse } from './parser';
+import { extract } from './rules';
 
 describe('modules/manager/bazel/parser', () => {
   it('parses rules input', () => {
-    const input = `go_repository(
-      deps = ["foo", "bar"],
-      name = "com_github_google_uuid",
-      importpath = "github.com/google/uuid",
-      commit = "dec09d789f3dba190787f8b4454c7d3c936fed9e",
-    )`;
+    const input = codeBlock`
+      go_repository(name = "foo")
+      maybe(go_repository, name = "bar", deps = ["baz", "qux"])
+      _go_repository(name = "quux")
+      maybe(_go_repository, name = "corge", deps = ["grault", "garply"])
+    `;
 
     const res = parse(input);
-    expect(res).toEqual({
-      meta: [
-        { data: { length: 3, offset: 30 }, path: [0, 'deps', 0] },
-        { data: { length: 3, offset: 37 }, path: [0, 'deps', 1] },
-        { data: { length: 22, offset: 58 }, path: [0, 'name'] },
-        { data: { length: 22, offset: 103 }, path: [0, 'importpath'] },
-        { data: { length: 40, offset: 144 }, path: [0, 'commit'] },
-        { data: { length: input.length, offset: 0 }, path: [0] },
-      ],
-      targets: [
-        {
-          commit: 'dec09d789f3dba190787f8b4454c7d3c936fed9e',
-          deps: ['foo', 'bar'],
-          importpath: 'github.com/google/uuid',
-          name: 'com_github_google_uuid',
-          rule: 'go_repository',
-        },
-      ],
-    });
-  });
 
-  it('parses maybe input', () => {
-    const input = `maybe(
-      go_repository,
-      deps = ["foo", "bar"],
-      name = "com_github_google_uuid",
-      importpath = "github.com/google/uuid",
-      commit = "dec09d789f3dba190787f8b4454c7d3c936fed9e",
-    )`;
-
-    const res = parse(input);
-    expect(res).toEqual({
-      meta: [
-        { data: { length: 3, offset: 43 }, path: [0, 'deps', 0] },
-        { data: { length: 3, offset: 50 }, path: [0, 'deps', 1] },
-        { data: { length: 22, offset: 71 }, path: [0, 'name'] },
-        { data: { length: 22, offset: 116 }, path: [0, 'importpath'] },
-        { data: { length: 40, offset: 157 }, path: [0, 'commit'] },
-        { data: { length: input.length, offset: 0 }, path: [0] },
-      ],
-      targets: [
-        {
-          commit: 'dec09d789f3dba190787f8b4454c7d3c936fed9e',
-          deps: ['foo', 'bar'],
-          importpath: 'github.com/google/uuid',
-          name: 'com_github_google_uuid',
-          rule: 'go_repository',
+    expect(res).toEqual([
+      {
+        type: 'record',
+        value: 'go_repository(name = "foo")',
+        offset: 0,
+        children: {
+          rule: { type: 'string', value: 'go_repository', offset: 0 },
+          name: { type: 'string', value: 'foo', offset: 22 },
         },
-      ],
-    });
+      },
+      {
+        type: 'record',
+        value: 'maybe(go_repository, name = "bar", deps = ["baz", "qux"])',
+        offset: 28,
+        children: {
+          rule: { type: 'string', value: 'go_repository', offset: 34 },
+          name: { type: 'string', value: 'bar', offset: 57 },
+          deps: {
+            type: 'array',
+            value: '["baz", "qux"]',
+            offset: 70,
+            children: [
+              { type: 'string', value: 'baz', offset: 72 },
+              { type: 'string', value: 'qux', offset: 79 },
+            ],
+          },
+        },
+      },
+      {
+        type: 'record',
+        value: '_go_repository(name = "quux")',
+        offset: 86,
+        children: {
+          rule: { type: 'string', value: '_go_repository', offset: 86 },
+          name: { type: 'string', value: 'quux', offset: 109 },
+        },
+      },
+      {
+        type: 'record',
+        value:
+          'maybe(_go_repository, name = "corge", deps = ["grault", "garply"])',
+        offset: 116,
+        children: {
+          rule: { type: 'string', value: '_go_repository', offset: 122 },
+          name: { type: 'string', value: 'corge', offset: 146 },
+          deps: {
+            type: 'array',
+            value: '["grault", "garply"]',
+            offset: 161,
+            children: [
+              { type: 'string', value: 'grault', offset: 163 },
+              { type: 'string', value: 'garply', offset: 173 },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(res?.map(extract)).toMatchObject([
+      { rule: 'go_repository', name: 'foo' },
+      { rule: 'go_repository', name: 'bar', deps: ['baz', 'qux'] },
+      { rule: '_go_repository', name: 'quux' },
+      { rule: '_go_repository', name: 'corge', deps: ['grault', 'garply'] },
+    ]);
   });
 
   it('parses multiple archives', () => {
-    const input = `
+    const input = codeBlock`
       http_archive(
           name = "aspect_rules_js",
           sha256 = "db9f446752fe4100320cf8487e8fd476b9af0adf6b99b601bcfd70b289bb0598",
@@ -74,72 +90,111 @@ describe('modules/manager/bazel/parser', () => {
         name = "rules_nodejs",
         sha256 = "5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064",
         urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz"],
-      )`;
+      )
+    `;
 
     const res = parse(input);
-    expect(res).toEqual({
-      meta: [
-        { data: { length: 15, offset: 39 }, path: [0, 'name'] },
-        { data: { length: 64, offset: 77 }, path: [0, 'sha256'] },
-        { data: { length: 14, offset: 170 }, path: [0, 'strip_prefix'] },
-        { data: { length: 72, offset: 204 }, path: [0, 'url'] },
-        { data: { length: 279, offset: 7 }, path: [0] },
-        { data: { length: 12, offset: 323 }, path: [0, 1, 'name'] },
-        { data: { length: 64, offset: 356 }, path: [0, 1, 'sha256'] },
-        { data: { length: 97, offset: 440 }, path: [0, 1, 'urls', 0] },
-        { data: { length: 255, offset: 293 }, path: [1] },
-      ],
-      targets: [
-        {
-          rule: 'http_archive',
-          name: 'aspect_rules_js',
-          sha256:
-            'db9f446752fe4100320cf8487e8fd476b9af0adf6b99b601bcfd70b289bb0598',
-          strip_prefix: 'rules_js-1.1.2',
-          url: 'https://github.com/aspect-build/rules_js/archive/refs/tags/v1.1.2.tar.gz',
+
+    expect(res).toMatchObject([
+      {
+        children: {
+          rule: { value: 'http_archive' },
+          name: { value: 'aspect_rules_js' },
+          sha256: {
+            value:
+              'db9f446752fe4100320cf8487e8fd476b9af0adf6b99b601bcfd70b289bb0598',
+          },
+          strip_prefix: { value: 'rules_js-1.1.2' },
+          url: {
+            value:
+              'https://github.com/aspect-build/rules_js/archive/refs/tags/v1.1.2.tar.gz',
+          },
         },
-        {
-          rule: 'http_archive',
-          name: 'rules_nodejs',
-          sha256:
-            '5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064',
-          urls: [
-            'https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz',
-          ],
+      },
+      {
+        children: {
+          rule: { value: 'http_archive' },
+          name: { value: 'rules_nodejs' },
+          sha256: {
+            value:
+              '5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064',
+          },
+          urls: {
+            type: 'array',
+            children: [
+              {
+                value:
+                  'https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz',
+              },
+            ],
+          },
         },
-      ],
-    });
+      },
+    ]);
+
+    expect(res?.map(extract)).toMatchObject([
+      {
+        rule: 'http_archive',
+        name: 'aspect_rules_js',
+        sha256:
+          'db9f446752fe4100320cf8487e8fd476b9af0adf6b99b601bcfd70b289bb0598',
+        strip_prefix: 'rules_js-1.1.2',
+        url: 'https://github.com/aspect-build/rules_js/archive/refs/tags/v1.1.2.tar.gz',
+      },
+      {
+        rule: 'http_archive',
+        name: 'rules_nodejs',
+        sha256:
+          '5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064',
+        urls: [
+          'https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz',
+        ],
+      },
+    ]);
   });
 
   it('parses http_archive', () => {
-    const input = `http_archive(
-          name = "rules_nodejs",
-          sha256 = "5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064",
-          url = "https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz",
-    )`;
+    const input = codeBlock`
+      http_archive(
+        name = "rules_nodejs",
+        sha256 = "5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064",
+        url = "https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz",
+      )
+    `;
 
     const res = parse(input);
-    expect(res).toEqual({
-      meta: [
-        { data: { length: 12, offset: 32 }, path: [0, 'name'] },
-        { data: { length: 64, offset: 67 }, path: [0, 'sha256'] },
-        { data: { length: 97, offset: 151 }, path: [0, 'url'] },
-        { data: { length: 256, offset: 0 }, path: [0] },
-      ],
-      targets: [
-        {
-          sha256:
-            '5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064',
-          url: 'https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz',
-          name: 'rules_nodejs',
-          rule: 'http_archive',
+
+    expect(res).toMatchObject([
+      {
+        children: {
+          name: { value: 'rules_nodejs' },
+          rule: { value: 'http_archive' },
+          sha256: {
+            value:
+              '5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064',
+          },
+          url: {
+            value:
+              'https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz',
+          },
         },
-      ],
-    });
+      },
+    ]);
+
+    expect(res?.map(extract)).toMatchObject([
+      {
+        rule: 'http_archive',
+        name: 'rules_nodejs',
+        sha256:
+          '5aef09ed3279aa01d5c928e3beb248f9ad32dde6aafe6373a8c994c3ce643064',
+        url: 'https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-core-5.5.3.tar.gz',
+      },
+    ]);
   });
 
   it('parses http_archive with prefixes and multiple urls', () => {
-    const input = `http_archive(
+    const input = codeBlock`
+      http_archive(
         name = "bazel_toolchains",
         sha256 = "4b1468b254a572dbe134cc1fd7c6eab1618a72acd339749ea343bd8f55c3b7eb",
         strip_prefix = "bazel-toolchains-d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4",
@@ -147,32 +202,104 @@ describe('modules/manager/bazel/parser', () => {
             "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz",
             "https://github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz",
         ],
-    )`;
+      )
+    `;
 
     const res = parse(input);
-    expect(res).toEqual({
-      meta: [
-        { data: { length: 16, offset: 30 }, path: [0, 'name'] },
-        { data: { length: 64, offset: 67 }, path: [0, 'sha256'] },
-        { data: { length: 57, offset: 158 }, path: [0, 'strip_prefix'] },
-        { data: { length: 121, offset: 248 }, path: [0, 'urls', 0] },
-        { data: { length: 102, offset: 385 }, path: [0, 'urls', 1] },
-        { data: { length: 506, offset: 0 }, path: [0] },
-      ],
-      targets: [
-        {
-          sha256:
-            '4b1468b254a572dbe134cc1fd7c6eab1618a72acd339749ea343bd8f55c3b7eb',
-          urls: [
-            'https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz',
-            'https://github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz',
-          ],
-          strip_prefix:
-            'bazel-toolchains-d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4',
-          name: 'bazel_toolchains',
-          rule: 'http_archive',
+
+    expect(res).toMatchObject([
+      {
+        children: {
+          name: { value: 'bazel_toolchains' },
+          rule: { value: 'http_archive' },
+          sha256: {
+            value:
+              '4b1468b254a572dbe134cc1fd7c6eab1618a72acd339749ea343bd8f55c3b7eb',
+          },
+          strip_prefix: {
+            value: 'bazel-toolchains-d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4',
+          },
+          urls: {
+            children: [
+              {
+                value:
+                  'https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz',
+              },
+              {
+                value:
+                  'https://github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz',
+              },
+            ],
+          },
         },
-      ],
-    });
+      },
+    ]);
+
+    expect(res?.map(extract)).toMatchObject([
+      {
+        name: 'bazel_toolchains',
+        rule: 'http_archive',
+        sha256:
+          '4b1468b254a572dbe134cc1fd7c6eab1618a72acd339749ea343bd8f55c3b7eb',
+        strip_prefix:
+          'bazel-toolchains-d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4',
+        urls: [
+          'https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz',
+          'https://github.com/bazelbuild/bazel-toolchains/archive/d665ccfa3e9c90fa789671bf4ef5f7c19c5715c4.tar.gz',
+        ],
+      },
+    ]);
+  });
+
+  it('parses Maven', () => {
+    const input = codeBlock`
+      maven_install(
+        artifacts = [
+          "com.example1:foo:1.1.1",
+          maven.artifact(
+            group = "com.example2",
+            artifact = "bar",
+            version = "2.2.2",
+          ),
+          maven.artifact(
+            "com.example3",
+            "baz",
+            "3.3.3",
+            neverlink = True
+          )
+        ],
+        repositories = [
+          "https://example1.com/maven2",
+          "https://example2.com/maven2",
+        ]
+      )
+    `;
+
+    const res = parse(input);
+
+    expect(res?.map(extract)).toEqual([
+      {
+        rule: 'maven_install',
+        artifacts: [
+          'com.example1:foo:1.1.1',
+          {
+            _function: 'maven.artifact',
+            group: 'com.example2',
+            artifact: 'bar',
+            version: '2.2.2',
+          },
+          {
+            _function: 'maven.artifact',
+            '0': 'com.example3',
+            '1': 'baz',
+            '2': '3.3.3',
+          },
+        ],
+        repositories: [
+          'https://example1.com/maven2',
+          'https://example2.com/maven2',
+        ],
+      },
+    ]);
   });
 });

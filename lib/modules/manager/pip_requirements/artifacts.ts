@@ -30,7 +30,7 @@ function dependencyAndHashPattern(depName: string): RegExp {
   // include all but the last hash specifier into depConstraint.
   return regEx(
     `^\\s*(?<depConstraint>${escapedDepName}${extrasPattern}\\s*==.*?\\S)\\s+--hash=`,
-    'm'
+    'm',
   );
 }
 
@@ -53,7 +53,7 @@ export async function updateArtifacts({
         continue;
       }
       const depAndHashMatch = dependencyAndHashPattern(dep.depName).exec(
-        rewrittenContent
+        rewrittenContent,
       );
       if (depAndHashMatch) {
         // If there's a match, then the regular expression guarantees
@@ -68,12 +68,11 @@ export async function updateArtifacts({
     }
     const execOptions: ExecOptions = {
       cwdFile: '.',
-      docker: {
-        image: 'sidecar',
-      },
-      preCommands: ['pip install --user hashin'],
+      docker: {},
+      userConfiguredEnv: config.env,
       toolConstraints: [
         { toolName: 'python', constraint: config.constraints?.python },
+        { toolName: 'hashin', constraint: config.constraints?.hashin },
       ],
       extraEnv: {
         PIP_CACHE_DIR: await ensureCacheDir('pip'),

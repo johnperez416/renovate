@@ -1,6 +1,7 @@
 import { logger } from '../../../../logger';
 import { EQUAL, GT, GTE, LT, LTE, NOT_EQUAL, PGTE } from '../operator';
-import { Range, parseRanges, satisfiesRange, stringifyRanges } from '../range';
+import type { Range } from '../range';
+import { parseRanges, satisfiesRange, stringifyRanges } from '../range';
 import { adapt, decrement, floor, increment } from '../version';
 
 // Common logic for replace, widen, and bump strategies
@@ -31,7 +32,7 @@ export function replacePart(part: Range, to: string): Range {
       return part;
     // istanbul ignore next
     default:
-      logger.warn(`Unsupported operator '${operator}'`);
+      logger.warn({ operator }, `Unsupported ruby versioning operator`);
       return { operator: '', delimiter: ' ', version: '' };
   }
 }
@@ -43,6 +44,16 @@ export default ({ range, to }: { range: string; to: string }): string => {
       // Note that consecutive `~>` and `>=` parts are combined into one Range object,
       // therefore both parts are updated if the new version violates one of them.
       return part;
+    }
+
+    if (part.version.split('.').length > to.split('.').length) {
+      const diff = part.version.split('.').length - to.split('.').length;
+      const versionToReplace = [to, ...Array(diff).fill('0')].join('.');
+      const replacement = replacePart(part, versionToReplace);
+      return {
+        ...replacement,
+        version: replacement.version.split('.').slice(0, -diff).join('.'),
+      };
     }
 
     return replacePart(part, to);

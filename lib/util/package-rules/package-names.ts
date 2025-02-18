@@ -1,31 +1,20 @@
 import is from '@sindresorhus/is';
 import type { PackageRule, PackageRuleInputConfig } from '../../config/types';
+import { matchRegexOrGlobList } from '../string-match';
 import { Matcher } from './base';
 
 export class PackageNameMatcher extends Matcher {
   override matches(
-    { depName }: PackageRuleInputConfig,
-    { matchPackageNames }: PackageRule
+    { packageName }: PackageRuleInputConfig,
+    packageRule: PackageRule,
   ): boolean | null {
+    const { matchPackageNames } = packageRule;
     if (is.undefined(matchPackageNames)) {
       return null;
     }
-    if (is.undefined(depName)) {
+    if (!packageName) {
       return false;
     }
-    return matchPackageNames.includes(depName);
-  }
-
-  override excludes(
-    { depName }: PackageRuleInputConfig,
-    { excludePackageNames }: PackageRule
-  ): boolean | null {
-    if (is.undefined(excludePackageNames)) {
-      return null;
-    }
-    if (is.undefined(depName)) {
-      return false;
-    }
-    return excludePackageNames.includes(depName);
+    return matchRegexOrGlobList(packageName, matchPackageNames);
   }
 }

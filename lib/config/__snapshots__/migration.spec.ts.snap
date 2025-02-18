@@ -1,5 +1,33 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`config/migration it migrates customManagers 1`] = `
+{
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": [
+        "(^|/|\\.)Dockerfile$",
+        "(^|/)Dockerfile[^/]*$",
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)(?: lookupName=(?<packageName>[^\\s]+?))?(?: versioning=(?<versioning>[a-z-0-9]+?))?\\s(?:ENV|ARG) .+?_VERSION="?(?<currentValue>.+?)"?\\s",
+      ],
+    },
+    {
+      "customType": "regex",
+      "fileMatch": [
+        "(^|/|\\.)Dockerfile$",
+        "(^|/)Dockerfile[^/]*$",
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)(?: lookupName=(?<holder>[^\\s]+?))?(?: versioning=(?<versioning>[a-z-0-9]+?))?\\s(?:ENV|ARG) .+?_VERSION="?(?<currentValue>.+?)"?\\s",
+      ],
+      "packageNameTemplate": "{{{holder}}}",
+    },
+  ],
+}
+`;
+
 exports[`config/migration it migrates gradle-lite 1`] = `
 {
   "gradle": {
@@ -30,48 +58,20 @@ exports[`config/migration it migrates nested packageRules 1`] = `
     },
     {
       "automerge": true,
-      "excludePackageNames": [
-        "@types/react-table",
-      ],
       "groupName": "definitelyTyped",
-      "matchPackagePrefixes": [
-        "@types/",
+      "matchPackageNames": [
+        "!@types/react-table",
+        "@types/**",
       ],
     },
     {
       "automerge": false,
-      "excludePackageNames": [
-        "@types/react-table",
-      ],
       "matchDepTypes": [
         "dependencies",
       ],
-    },
-  ],
-}
-`;
-
-exports[`config/migration it migrates regexManagers 1`] = `
-{
-  "regexManagers": [
-    {
-      "fileMatch": [
-        "(^|/|\\.)Dockerfile$",
-        "(^|/)Dockerfile[^/]*$",
+      "matchPackageNames": [
+        "!@types/react-table",
       ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)(?: lookupName=(?<packageName>[^\\s]+?))?(?: versioning=(?<versioning>[a-z-0-9]+?))?\\s(?:ENV|ARG) .+?_VERSION="?(?<currentValue>.+?)"?\\s",
-      ],
-    },
-    {
-      "fileMatch": [
-        "(^|/|\\.)Dockerfile$",
-        "(^|/)Dockerfile[^/]*$",
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)(?: lookupName=(?<holder>[^\\s]+?))?(?: versioning=(?<versioning>[a-z-0-9]+?))?\\s(?:ENV|ARG) .+?_VERSION="?(?<currentValue>.+?)"?\\s",
-      ],
-      "packageNameTemplate": "{{{holder}}}",
     },
   ],
 }
@@ -131,6 +131,7 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates config 1`
     "config:js-lib",
     ":dependencyDashboard",
   ],
+  "forkProcessing": "enabled",
   "hostRules": [
     {
       "hostType": "docker",
@@ -142,7 +143,6 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates config 1`
   "ignorePaths": [
     "node_modules/",
   ],
-  "includeForks": true,
   "lockFileMaintenance": {
     "automerge": true,
     "exposeAllEnv": false,
@@ -164,7 +164,7 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates config 1`
         "extends": [
           "node",
         ],
-        "matchPaths": [
+        "matchFileNames": [
           "node/**",
         ],
       },
@@ -173,23 +173,38 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates config 1`
   "onboarding": false,
   "packageRules": [
     {
-      "excludePackageNames": "foo",
+      "enabled": false,
+      "matchCategories": [
+        "python",
+      ],
+      "matchPackageNames": [
+        "foo",
+      ],
+    },
+    {
+      "enabled": false,
+      "matchCategories": [
+        "dotnet",
+      ],
+    },
+    {
       "groupName": "angular packages",
-      "matchPackagePatterns": "^(@angular|typescript)",
+      "matchPackageNames": [
+        "/^(@angular|typescript)/",
+        "!foo",
+      ],
     },
     {
       "groupName": "foo",
-      "matchPackagePatterns": [
-        "^foo",
+      "matchPackageNames": [
+        "/^foo/",
       ],
     },
     {
       "enabled": false,
       "matchPackageNames": [
         "angular",
-      ],
-      "matchPackagePatterns": [
-        "ang",
+        "/ang/",
       ],
     },
     {
@@ -211,7 +226,7 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates config 1`
       "extends": [
         "foo",
       ],
-      "matchPaths": [
+      "matchFileNames": [
         "examples/**",
       ],
     },
@@ -275,7 +290,6 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates config 1`
   "separateMinorPatch": true,
   "suppressNotifications": [
     "lockFileErrors",
-    "deprecationWarningIssues",
   ],
   "travis": {
     "enabled": true,
@@ -293,7 +307,7 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates more pack
       "matchDepTypes": [
         "devDependencies",
       ],
-      "matchPaths": [
+      "matchFileNames": [
         "package.json",
       ],
       "rangeStrategy": "pin",
@@ -302,23 +316,12 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates more pack
       "matchDepTypes": [
         "dependencies",
       ],
-      "matchPaths": [
+      "matchFileNames": [
         "package.json",
       ],
       "rangeStrategy": "pin",
     },
   ],
-}
-`;
-
-exports[`config/migration migrateConfig(config, parentConfig) migrates node to travis 1`] = `
-{
-  "node": {
-    "automerge": false,
-  },
-  "travis": {
-    "enabled": true,
-  },
 }
 `;
 
@@ -332,13 +335,13 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates packageFi
   ],
   "packageRules": [
     {
-      "matchPaths": [
+      "matchFileNames": [
         "backend/package.json",
       ],
       "rangeStrategy": "replace",
     },
     {
-      "matchPaths": [
+      "matchFileNames": [
         "frontend/package.json",
       ],
       "rangeStrategy": "pin",
@@ -347,7 +350,7 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates packageFi
       "matchDepTypes": [
         "devDependencies",
       ],
-      "matchPaths": [
+      "matchFileNames": [
         "other/package.json",
       ],
       "rangeStrategy": "pin",
@@ -356,7 +359,7 @@ exports[`config/migration migrateConfig(config, parentConfig) migrates packageFi
       "matchDepTypes": [
         "dependencies",
       ],
-      "matchPaths": [
+      "matchFileNames": [
         "other/package.json",
       ],
       "rangeStrategy": "pin",
@@ -393,7 +396,9 @@ exports[`config/migration migrateConfig(config, parentConfig) overrides existing
       "major": {
         "automerge": false,
       },
-      "matchPackagePatterns": "^(@angular|typescript)",
+      "matchPackageNames": [
+        "/^(@angular|typescript)/",
+      ],
       "minor": {
         "automerge": false,
       },

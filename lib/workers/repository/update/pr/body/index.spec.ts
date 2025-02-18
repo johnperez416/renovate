@@ -39,10 +39,10 @@ describe('workers/repository/update/pr/body/index', () => {
   describe('getPrBody', () => {
     beforeEach(() => {
       changelogs.getChangelogs.mockReturnValueOnce('getChangelogs');
-      configDescription.getPrConfigDescription.mockResolvedValueOnce(
-        'getPrConfigDescription'
+      configDescription.getPrConfigDescription.mockReturnValueOnce(
+        'getPrConfigDescription',
       );
-      controls.getControls.mockResolvedValueOnce('getControls');
+      controls.getControls.mockReturnValueOnce('getControls');
       footer.getPrFooter.mockReturnValueOnce('getPrFooter');
       header.getPrHeader.mockReturnValueOnce('getPrHeader');
       notes.getPrExtraNotes.mockReturnValueOnce('getPrExtraNotes');
@@ -50,47 +50,69 @@ describe('workers/repository/update/pr/body/index', () => {
       table.getPrUpdatesTable.mockReturnValueOnce('getPrUpdatesTable');
     });
 
-    it('handles empty template', async () => {
-      const res = await getPrBody(
+    it('handles empty template', () => {
+      const res = getPrBody(
         {
           manager: 'some-manager',
           branchName: 'some-branch',
+          baseBranch: 'base',
           upgrades: [],
         },
         {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
       expect(res).toBeEmptyString();
     });
 
-    it('massages upgrades', async () => {
+    it('massages upgrades', () => {
       const upgrade = {
         manager: 'some-manager',
         branchName: 'some-branch',
         dependencyUrl: 'https://github.com/foo/bar',
-        sourceUrl: 'https://github.com/foo/bar.git',
+        sourceUrl: 'https://github.com/foo/bar',
         sourceDirectory: '/baz',
         changelogUrl:
           'https://raw.githubusercontent.com/foo/bar/tree/main/CHANGELOG.md',
         homepage: 'https://example.com',
       };
 
-      await getPrBody(
+      const upgrade1 = {
+        manager: 'some-manager',
+        branchName: 'some-branch',
+        sourceUrl: 'https://github.com/foo/bar',
+        homepage: 'https://example.com',
+      };
+
+      const upgradeBitbucket = {
+        manager: 'some-manager',
+        branchName: 'some-branch',
+        sourceUrl: 'https://bitbucket.org/foo/bar',
+        sourceDirectory: '/baz',
+        changelogUrl: 'https://bitbucket.org/foo/bar/src/main/CHANGELOG.md',
+        homepage: 'https://example.com',
+      };
+
+      getPrBody(
         {
           manager: 'some-manager',
+          baseBranch: 'base',
           branchName: 'some-branch',
-          upgrades: [upgrade],
+          upgrades: [upgrade, upgrade1, upgradeBitbucket],
         },
         {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
 
       expect(upgrade).toMatchObject({
@@ -98,26 +120,45 @@ describe('workers/repository/update/pr/body/index', () => {
         changelogUrl:
           'https://raw.githubusercontent.com/foo/bar/tree/main/CHANGELOG.md',
         depNameLinked:
-          '[undefined](https://example.com) ([source](https://github.com/foo/bar.git), [changelog](https://raw.githubusercontent.com/foo/bar/tree/main/CHANGELOG.md))',
+          '[undefined](https://example.com) ([source](https://github.com/foo/bar/tree/HEAD/baz), [changelog](https://raw.githubusercontent.com/foo/bar/tree/main/CHANGELOG.md))',
         dependencyUrl: 'https://github.com/foo/bar',
         homepage: 'https://example.com',
         references:
-          '[homepage](https://example.com), [source](https://github.com/foo/bar.git/tree/HEAD/baz), [changelog](https://raw.githubusercontent.com/foo/bar/tree/main/CHANGELOG.md)',
+          '[homepage](https://example.com), [source](https://github.com/foo/bar/tree/HEAD/baz), [changelog](https://raw.githubusercontent.com/foo/bar/tree/main/CHANGELOG.md)',
         sourceDirectory: '/baz',
-        sourceUrl: 'https://github.com/foo/bar.git',
+        sourceUrl: 'https://github.com/foo/bar',
+      });
+      expect(upgrade1).toMatchObject({
+        branchName: 'some-branch',
+        depNameLinked:
+          '[undefined](https://example.com) ([source](https://github.com/foo/bar))',
+        references:
+          '[homepage](https://example.com), [source](https://github.com/foo/bar)',
+        homepage: 'https://example.com',
+        sourceUrl: 'https://github.com/foo/bar',
+      });
+      expect(upgradeBitbucket).toMatchObject({
+        branchName: 'some-branch',
+        depNameLinked:
+          '[undefined](https://example.com) ([source](https://bitbucket.org/foo/bar/src/HEAD/baz), [changelog](https://bitbucket.org/foo/bar/src/main/CHANGELOG.md))',
+        references:
+          '[homepage](https://example.com), [source](https://bitbucket.org/foo/bar/src/HEAD/baz), [changelog](https://bitbucket.org/foo/bar/src/main/CHANGELOG.md)',
+        homepage: 'https://example.com',
+        sourceUrl: 'https://bitbucket.org/foo/bar',
       });
     });
 
-    it('uses dependencyUrl as primary link', async () => {
+    it('uses dependencyUrl as primary link', () => {
       const upgrade = {
         manager: 'some-manager',
         branchName: 'some-branch',
         dependencyUrl: 'https://github.com/foo/bar',
       };
 
-      await getPrBody(
+      getPrBody(
         {
           manager: 'some-manager',
+          baseBranch: 'base',
           branchName: 'some-branch',
           upgrades: [upgrade],
         },
@@ -125,8 +166,10 @@ describe('workers/repository/update/pr/body/index', () => {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
 
       expect(upgrade).toMatchObject({
@@ -137,13 +180,14 @@ describe('workers/repository/update/pr/body/index', () => {
       });
     });
 
-    it('compiles template', async () => {
+    it('compiles template', () => {
       platform.massageMarkdown.mockImplementation((x) => x);
       template.compile.mockImplementation((x) => x);
-      const res = await getPrBody(
+      const res = getPrBody(
         {
           manager: 'some-manager',
           branchName: 'some-branch',
+          baseBranch: 'base',
           upgrades: [],
           prBodyTemplate: 'PR BODY',
         },
@@ -151,19 +195,22 @@ describe('workers/repository/update/pr/body/index', () => {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
       expect(res).toContain('PR BODY');
       expect(res).toContain(`<!--renovate-debug`);
     });
 
-    it('supports custom rebasing message', async () => {
+    it('supports custom rebasing message', () => {
       platform.massageMarkdown.mockImplementation((x) => x);
       template.compile.mockImplementation((x) => x);
-      const res = await getPrBody(
+      const res = getPrBody(
         {
           manager: 'some-manager',
+          baseBranch: 'base',
           branchName: 'some-branch',
           upgrades: [],
           prBodyTemplate: ['aaa', '**Rebasing**: FOO', 'bbb'].join('\n'),
@@ -173,35 +220,40 @@ describe('workers/repository/update/pr/body/index', () => {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
       expect(res).toContain(['aaa', '**Rebasing**: BAR', 'bbb'].join('\n'));
     });
 
-    it('updates PR due to body change without pr data', async () => {
+    it('updates PR due to body change without pr data', () => {
       platform.massageMarkdown.mockImplementation((x) => x);
       template.compile.mockImplementation((x) => x);
-      const res = await getPrBody(
+      const res = getPrBody(
         {
           manager: 'some-manager',
           branchName: 'some-branch',
           upgrades: [],
+          baseBranch: 'base',
           prBodyTemplate: 'PR BODY',
         },
         {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
 
       const match = prDebugDataRe.exec(res);
       expect(match?.groups?.payload).toBeString();
     });
 
-    it('pr body warning', async () => {
+    it('pr body warning', () => {
       const massagedMarkDown =
         '---\n\n### ⚠ Dependency Lookup Warnings ⚠\n\n' +
         'Warnings were logged while processing this repo. ' +
@@ -228,20 +280,23 @@ describe('workers/repository/update/pr/body/index', () => {
         ],
       };
 
-      const res = await getPrBody(
+      const res = getPrBody(
         {
           manager: 'some-manager',
           branchName: 'some-branch',
           upgrades: [],
-          packageFiles: packageFiles,
+          packageFiles,
           prBodyTemplate: '{{{warnings}}}',
+          baseBranch: 'base',
         },
         {
           debugData: {
             updatedInVer: '1.2.3',
             createdInVer: '1.2.3',
+            targetBranch: 'base',
           },
-        }
+        },
+        {},
       );
       const expected =
         '---\n\n### ⚠ Dependency Lookup Warnings ⚠' +

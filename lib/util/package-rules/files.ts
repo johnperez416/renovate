@@ -1,23 +1,28 @@
 import is from '@sindresorhus/is';
 import type { PackageRule, PackageRuleInputConfig } from '../../config/types';
+import { anyMatchRegexOrGlobList, matchRegexOrGlobList } from '../string-match';
 import { Matcher } from './base';
 
-export class FilesMatcher extends Matcher {
+export class FileNamesMatcher extends Matcher {
   override matches(
     { packageFile, lockFiles }: PackageRuleInputConfig,
-    { matchFiles }: PackageRule
+    { matchFileNames }: PackageRule,
   ): boolean | null {
-    if (is.undefined(matchFiles)) {
+    if (is.undefined(matchFileNames)) {
       return null;
     }
     if (is.undefined(packageFile)) {
       return false;
     }
 
-    return matchFiles.some(
-      (fileName) =>
-        packageFile === fileName ||
-        (is.array(lockFiles) && lockFiles?.includes(fileName))
-    );
+    if (matchRegexOrGlobList(packageFile, matchFileNames)) {
+      return true;
+    }
+
+    if (is.array(lockFiles)) {
+      return anyMatchRegexOrGlobList(lockFiles, matchFileNames);
+    }
+
+    return false;
   }
 }

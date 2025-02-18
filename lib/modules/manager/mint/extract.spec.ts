@@ -1,33 +1,19 @@
+import { codeBlock } from 'common-tags';
 import { extractPackageFile } from '.';
-
-const simpleMintfile = `
-SwiftGen/SwiftGen@6.6.1
-yonaskolb/xcodegen@2.30.0
-realm/SwiftLint @ 0.48.0
-#realm/SwiftLint @ 0.48.0
-`;
-
-const noVersionMintfileContent = `
-yonaskolb/xcodegen
-realm/SwiftLint
-`;
-
-const complexMintFileContent = `
-SwiftGen/SwiftGen@6.6.1
-yonaskolb/xcodegen
-realm/SwiftLint @ 0.48.0`;
-
-const includesCommentedOutMintFileContent = `
-SwiftGen/SwiftGen@6.6.1
-yonaskolb/xcodegen
-#yonaskolb/xcodegen
-realm/SwiftLint@0.48.0 #commented out
-`;
 
 describe('modules/manager/mint/extract', () => {
   describe('extractPackageFile()', () => {
+    it('returns null for empty', () => {
+      expect(extractPackageFile('')).toBeNull();
+    });
+
     it('Mintfile With Version Description', () => {
-      const res = extractPackageFile(simpleMintfile);
+      const res = extractPackageFile(codeBlock`
+        SwiftGen/SwiftGen@6.6.1
+        yonaskolb/xcodegen@2.30.0
+        realm/SwiftLint @ 0.48.0
+        #realm/SwiftLint @ 0.48.0
+      `);
       expect(res).toEqual({
         deps: [
           {
@@ -53,23 +39,30 @@ describe('modules/manager/mint/extract', () => {
     });
 
     it('Mintfile Without Version Description', () => {
-      const res = extractPackageFile(noVersionMintfileContent);
+      const res = extractPackageFile(codeBlock`
+        yonaskolb/xcodegen
+        realm/SwiftLint
+      `);
       expect(res).toEqual({
         deps: [
           {
             depName: 'yonaskolb/xcodegen',
-            skipReason: 'no-version',
+            skipReason: 'unspecified-version',
           },
           {
             depName: 'realm/SwiftLint',
-            skipReason: 'no-version',
+            skipReason: 'unspecified-version',
           },
         ],
       });
     });
 
     it('Complex Mintfile', () => {
-      const res = extractPackageFile(complexMintFileContent);
+      const res = extractPackageFile(codeBlock`
+        SwiftGen/SwiftGen@6.6.1
+        yonaskolb/xcodegen
+        realm/SwiftLint @ 0.48.0
+      `);
       expect(res).toEqual({
         deps: [
           {
@@ -80,7 +73,7 @@ describe('modules/manager/mint/extract', () => {
           },
           {
             depName: 'yonaskolb/xcodegen',
-            skipReason: 'no-version',
+            skipReason: 'unspecified-version',
           },
           {
             depName: 'realm/SwiftLint',
@@ -93,7 +86,13 @@ describe('modules/manager/mint/extract', () => {
     });
 
     it('Mintfile Includes Commented Out', () => {
-      const res = extractPackageFile(includesCommentedOutMintFileContent);
+      const res = extractPackageFile(codeBlock`
+        SwiftGen/SwiftGen@6.6.1
+
+        yonaskolb/xcodegen
+        #yonaskolb/xcodegen
+        realm/SwiftLint@0.48.0 #commented out
+      `);
       expect(res).toEqual({
         deps: [
           {
@@ -104,7 +103,7 @@ describe('modules/manager/mint/extract', () => {
           },
           {
             depName: 'yonaskolb/xcodegen',
-            skipReason: 'no-version',
+            skipReason: 'unspecified-version',
           },
           {
             depName: 'realm/SwiftLint',

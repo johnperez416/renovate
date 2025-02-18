@@ -1,9 +1,9 @@
-// TODO #7154
+// TODO #22198
 import cleanGitRef from 'clean-git-ref';
-import hasha from 'hasha';
 import slugify from 'slugify';
 import type { RenovateConfig } from '../../../config/types';
 import { logger } from '../../../logger';
+import { hash } from '../../../util/hash';
 import { regEx } from '../../../util/regex';
 import * as template from '../../../util/template';
 
@@ -11,7 +11,7 @@ const MIN_HASH_LENGTH = 6;
 
 const RE_MULTIPLE_DASH = regEx(/--+/g);
 
-const RE_SPECIAL_CHARS_STRICT = regEx(/[`~!@#$%^&*()_=+[\]\\|{};':",.<>?]/g);
+const RE_SPECIAL_CHARS_STRICT = regEx(/[`~!@#$%^&*()_=+[\]\\|{};':",.<>?/]/g);
 
 /**
  * Clean git branch name
@@ -26,12 +26,20 @@ const RE_SPECIAL_CHARS_STRICT = regEx(/[`~!@#$%^&*()_=+[\]\\|{};':",.<>?]/g);
  */
 function cleanBranchName(
   branchName: string,
-  branchNameStrict?: boolean
+  branchPrefix: string,
+  branchNameStrict?: boolean,
 ): string {
   let cleanedBranchName = branchName;
 
+  let existingBranchPrefix = '';
   if (branchNameStrict) {
-    cleanedBranchName = cleanedBranchName.replace(RE_SPECIAL_CHARS_STRICT, '-'); // massage out all special characters that slip through slugify
+    if (cleanedBranchName.startsWith(branchPrefix)) {
+      existingBranchPrefix = branchPrefix;
+      cleanedBranchName = cleanedBranchName.slice(branchPrefix.length);
+    }
+    cleanedBranchName =
+      existingBranchPrefix +
+      cleanedBranchName.replace(RE_SPECIAL_CHARS_STRICT, '-'); // massage out all special characters that slip through slugify
   }
 
   return cleanGitRef
@@ -47,22 +55,38 @@ function cleanBranchName(
 
 export function generateBranchName(update: RenovateConfig): void {
   // Check whether to use a group name
-  if (update.groupName) {
-    logger.debug('Using group branchName template');
-    // TODO: types (#7154)
+  const newMajor = String(update.newMajor);
+  const newMinor = String(update.newMinor);
+  if (!update.groupName && update.sharedVariableName) {
     logger.debug(
-      `Dependency ${update.depName!} is part of group ${update.groupName}`
+      `Using sharedVariableName=${update.sharedVariableName} as groupName for depName=${update.depName}`,
     );
-    update.groupSlug = slugify(update.groupSlug ?? update.groupName, {
+    update.groupName = update.sharedVariableName;
+  }
+  if (update.groupName) {
+    update.groupName = template.compile(update.groupName, update);
+    logger.trace('Using group branchName template');
+    // TODO: types (#22198)
+    logger.trace(
+      `Dependency ${update.depName!} is part of group ${update.groupName}`,
+    );
+    if (update.groupSlug) {
+      update.groupSlug = template.compile(update.groupSlug, update);
+    } else {
+      update.groupSlug = update.groupName;
+    }
+    update.groupSlug = slugify(update.groupSlug, {
       lower: true,
     });
     if (update.updateType === 'major' && update.separateMajorMinor) {
       if (update.separateMultipleMajor) {
-        const newMajor = String(update.newMajor);
         update.groupSlug = `major-${newMajor}-${update.groupSlug}`;
       } else {
         update.groupSlug = `major-${update.groupSlug}`;
       }
+    }
+    if (update.updateType === 'minor' && update.separateMultipleMinor) {
+      update.groupSlug = `minor-${newMajor}.${newMinor}-${update.groupSlug}`;
     }
     if (update.updateType === 'patch' && update.separateMinorPatch) {
       update.groupSlug = `patch-${update.groupSlug}`;
@@ -75,19 +99,19 @@ export function generateBranchName(update: RenovateConfig): void {
     let hashLength = update.hashedBranchLength - update.branchPrefix!.length;
     if (hashLength < MIN_HASH_LENGTH) {
       logger.warn(
-        `\`hashedBranchLength\` must allow for at least ${MIN_HASH_LENGTH} characters hashing in addition to \`branchPrefix\`. Using ${MIN_HASH_LENGTH} character hash instead.`
+        `\`hashedBranchLength\` must allow for at least ${MIN_HASH_LENGTH} characters hashing in addition to \`branchPrefix\`. Using ${MIN_HASH_LENGTH} character hash instead.`,
       );
       hashLength = MIN_HASH_LENGTH;
     }
 
     const additionalBranchPrefix = template.compile(
       String(update.additionalBranchPrefix ?? ''),
-      update
+      update,
     );
 
     const branchTopic = template.compile(
       String(update.branchTopic ?? ''),
-      update
+      update,
     );
 
     let hashInput = additionalBranchPrefix + branchTopic;
@@ -96,10 +120,13 @@ export function generateBranchName(update: RenovateConfig): void {
     hashInput = template.compile(hashInput, update);
     hashInput = template.compile(hashInput, update);
 
-    const hash = hasha(hashInput);
+    const hashedInput = hash(hashInput);
 
-    // TODO: types (#7154)
-    update.branchName = `${update.branchPrefix!}${hash.slice(0, hashLength)}`;
+    // TODO: types (#22198)
+    update.branchName = `${update.branchPrefix!}${hashedInput.slice(
+      0,
+      hashLength,
+    )}`;
   } else {
     update.branchName = template.compile(update.branchName!, update);
 
@@ -107,9 +134,12 @@ export function generateBranchName(update: RenovateConfig): void {
     update.branchName = template.compile(update.branchName, update);
     update.branchName = template.compile(update.branchName, update);
   }
-
+  if (update.updateType === 'minor' && update.separateMultipleMinor) {
+    update.branchName = update.branchName.replace('.x', `.${newMinor}.x`);
+  }
   update.branchName = cleanBranchName(
     update.branchName,
-    update.branchNameStrict
+    update.branchPrefix!,
+    update.branchNameStrict,
   );
 }

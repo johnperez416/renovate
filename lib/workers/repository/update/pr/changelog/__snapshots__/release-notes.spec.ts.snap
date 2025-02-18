@@ -1,64 +1,5 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`workers/repository/update/pr/changelog/release-notes getReleaseList() should return release list for github repo 1`] = `
-[
-  {
-    "body": undefined,
-    "id": undefined,
-    "name": undefined,
-    "notesSourceUrl": "https://api.github.com/repos/some/yet-other-repository/releases",
-    "tag": "v1.0.0",
-    "url": undefined,
-  },
-  {
-    "body": "some body #123, [#124](https://github.com/some/yet-other-repository/issues/124)",
-    "id": undefined,
-    "name": undefined,
-    "notesSourceUrl": "https://api.github.com/repos/some/yet-other-repository/releases",
-    "tag": "v1.0.1",
-    "url": undefined,
-  },
-]
-`;
-
-exports[`workers/repository/update/pr/changelog/release-notes getReleaseList() should return release list for gitlab.com project 1`] = `
-[
-  {
-    "body": undefined,
-    "name": undefined,
-    "notesSourceUrl": "https://gitlab.com/api/v4/projects/some%2Fyet-other-repository/releases",
-    "tag": "v1.0.0",
-    "url": "https://gitlab.com/api/v4/projects/some%2Fyet-other-repository/releases/v1.0.0",
-  },
-  {
-    "body": undefined,
-    "name": undefined,
-    "notesSourceUrl": "https://gitlab.com/api/v4/projects/some%2Fyet-other-repository/releases",
-    "tag": "v1.0.1",
-    "url": "https://gitlab.com/api/v4/projects/some%2Fyet-other-repository/releases/v1.0.1",
-  },
-]
-`;
-
-exports[`workers/repository/update/pr/changelog/release-notes getReleaseList() should return release list for self hosted gitlab project 1`] = `
-[
-  {
-    "body": undefined,
-    "name": undefined,
-    "notesSourceUrl": "https://my.custom.domain/api/v4/projects/some%2Fyet-other-repository/releases",
-    "tag": "v1.0.0",
-    "url": "https://my.custom.domain/api/v4/projects/some%2Fyet-other-repository/releases/v1.0.0",
-  },
-  {
-    "body": undefined,
-    "name": undefined,
-    "notesSourceUrl": "https://my.custom.domain/api/v4/projects/some%2Fyet-other-repository/releases",
-    "tag": "v1.0.1",
-    "url": "https://my.custom.domain/api/v4/projects/some%2Fyet-other-repository/releases/v1.0.1",
-  },
-]
-`;
-
 exports[`workers/repository/update/pr/changelog/release-notes getReleaseNotesMd() ReleaseNotes Correctness handles gitlab sourceDirectory 1`] = `
 {
   "body": "-   add new auth, fix accept header and base path in mock
@@ -116,7 +57,7 @@ exports[`workers/repository/update/pr/changelog/release-notes getReleaseNotesMd(
 -   **yargs:** correct support of bundled electron apps ([#1554](https://www.github.com/yargs/yargs/issues/1554)) ([a0b61ac](https://www.github.com/yargs/yargs/commit/a0b61ac21e2b554aa73dbf1a66d4a7af94047c2f))
 ",
   "notesSourceUrl": "https://github.com/yargs/yargs/blob/HEAD/CHANGELOG.md",
-  "url": "https://github.com/yargs/yargs/blob/HEAD/CHANGELOG.md#1520-httpswwwgithubcomyargsyargscomparev1510v1520-2020-03-01",
+  "url": "https://github.com/yargs/yargs/blob/HEAD/CHANGELOG.md#1520-2020-03-01",
 }
 `;
 
@@ -132,7 +73,7 @@ exports[`workers/repository/update/pr/changelog/release-notes getReleaseNotesMd(
 -   address ambiguity between nargs of 1 and requiresArg ([#1572](https://www.github.com/yargs/yargs/issues/1572)) ([a5edc32](https://www.github.com/yargs/yargs/commit/a5edc328ecb3f90d1ba09cfe70a0040f68adf50a))
 ",
   "notesSourceUrl": "https://github.com/yargs/yargs/blob/HEAD/CHANGELOG.md",
-  "url": "https://github.com/yargs/yargs/blob/HEAD/CHANGELOG.md#1530-httpswwwgithubcomyargsyargscomparev1520v1530-2020-03-08",
+  "url": "https://github.com/yargs/yargs/blob/HEAD/CHANGELOG.md#1530-2020-03-08",
 }
 `;
 

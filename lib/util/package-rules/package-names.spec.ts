@@ -4,30 +4,53 @@ describe('util/package-rules/package-names', () => {
   const packageNameMatcher = new PackageNameMatcher();
 
   describe('match', () => {
-    it('should return false if packageFile is not defined', () => {
+    it('should return false if packageName is not defined', () => {
       const result = packageNameMatcher.matches(
         {
-          depName: undefined,
+          packageName: undefined,
         },
         {
           matchPackageNames: ['@opentelemetry/http'],
-        }
+        },
       );
       expect(result).toBeFalse();
     });
-  });
 
-  describe('exclude', () => {
-    it('should return false if packageFile is not defined', () => {
-      const result = packageNameMatcher.excludes(
+    it('should return false if not matching', () => {
+      const result = packageNameMatcher.matches(
         {
-          depName: undefined,
+          depName: 'abc',
+          packageName: 'def',
         },
         {
-          excludePackageNames: ['@opentelemetry/http'],
-        }
+          matchPackageNames: ['ghi'],
+        },
       );
       expect(result).toBeFalse();
+    });
+
+    it('should matchPackageName', () => {
+      const result = packageNameMatcher.matches(
+        {
+          packageName: 'def',
+        },
+        {
+          matchPackageNames: ['def', 'ghi'],
+        },
+      );
+      expect(result).toBeTrue();
+    });
+
+    it('should match pattern', () => {
+      const result = packageNameMatcher.matches(
+        {
+          packageName: 'b',
+        },
+        {
+          matchPackageNames: ['/b/'],
+        },
+      );
+      expect(result).toBeTrue();
     });
   });
 });

@@ -1,6 +1,5 @@
-FROM containerbase/node:14.20.0@sha256:2b91af7fb1fd05be2d7d37d328e6526af94387fe3d974396a895757e0d3d108a
+FROM ghcr.io/containerbase/devcontainer:13.7.15
 
-USER root
-
+# https://github.com/pnpm/pnpm/issues/8971
 # renovate: datasource=npm
-RUN install-tool yarn 1.22.19
+RUN install-tool pnpm 10.3.0
